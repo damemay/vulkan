@@ -1,0 +1,10 @@
+[package]
+name = "pelkan-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ash = { git = "https://github.com/ash-rs/ash.git" }
+ash-window = { git = "https://github.com/ash-rs/ash.git" }
+vk-mem = { git = "https://github.com/SimonBorghese/vk-mem-rs.git", rev = "5062f0bc3009f8c5dfaebd7c8da27c22ba6379ec" }
+winit = "0.30.5"
