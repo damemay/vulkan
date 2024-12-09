@@ -64,19 +64,12 @@ impl Dev {
     ) -> Result<vk::PhysicalDevice, Error> {
         let pdevices = unsafe { instance.enumerate_physical_devices() }
             .map_err(|_| Error::NoVulkanGPUFound)?;
-        let mut ext_choice = vk::PhysicalDevice::null();
-        let mut type_choice = vk::PhysicalDevice::null();
+        let mut fallback = vk::PhysicalDevice::null();
         for pdev in pdevices {
             let exts = unsafe { instance.enumerate_device_extension_properties(pdev) }
                 .map_err(|_| Error::NoGPUExtensionsFound)?;
             let mut ext_count = 0;
             for pe in exts {
-                for &ue in &info.extensions {
-                    if ue == pe.extension_name_as_c_str().unwrap() {
-                        ext_count += 1;
-                        continue;
-                    }
-                }
                 for &ue in &info.extensions {
                     if ue == pe.extension_name_as_c_str().unwrap() {
                         ext_count += 1;
@@ -90,18 +83,17 @@ impl Dev {
             if info.preferred_type.is_some() {
                 let prop = unsafe { instance.get_physical_device_properties(pdev) };
                 if prop.device_type == info.preferred_type.unwrap() {
-                    type_choice = pdev;
-                    break;
+                    return Ok(pdev);
                 }
+            } else {
+                return Ok(pdev);
             }
-            ext_choice = pdev;
+            fallback = pdev;
         }
-        if type_choice.is_null() && !ext_choice.is_null() {
-            Ok(ext_choice)
-        } else if !type_choice.is_null() && ext_choice.is_null() {
-            Ok(type_choice)
-        } else {
+        if fallback.is_null() {
             Err(Error::NoRequestedGPUExtensions)
+        } else {
+            Ok(fallback)
         }
     }
 

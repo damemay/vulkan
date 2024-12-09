@@ -1,9 +1,10 @@
 use ash::{khr, vk};
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use crate::{Dev, Error, Surface};
 
-pub struct Swapchain<'a> {
+pub struct Swapchain {
     pub loader: khr::swapchain::Device,
     pub handle: vk::SwapchainKHR,
 
@@ -17,43 +18,55 @@ pub struct Swapchain<'a> {
     pub sharing_mode: vk::SharingMode,
     pub capabilities: vk::SurfaceCapabilitiesKHR,
 
-    device: Cow<'a, Dev>,
-    surface: Cow<'a, Surface>,
+    device: Rc<Dev>,
+    surface: Rc<Surface>,
 }
 
-impl Swapchain<'_> {
+impl Swapchain {
     pub fn new<'a>(
         instance: &ash::Instance,
-        device: Cow<'a, Dev>,
-        surface: Cow<'a, Surface>,
+        device: Rc<Dev>,
+        surface: Rc<Surface>,
         u_extent: vk::Extent2D,
-        u_surface_format: vk::SurfaceFormatKHR,
-        u_present_mode: vk::PresentModeKHR,
-    ) -> Result<Swapchain<'a>, Error> {
-        let surface_format = unsafe {
-            surface
-                .loader
-                .get_physical_device_surface_formats(device.pdev, surface.surface)
-        }
-        .map_err(|_| Error::NoSurfaceFormatFound)?
-        .into_iter()
-        .find(|sf| {
-            sf.format == u_surface_format.format && sf.color_space == u_surface_format.color_space
-        })
-        .unwrap_or(vk::SurfaceFormatKHR {
-            format: vk::Format::B8G8R8A8_SRGB,
-            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-        });
+        u_surface_format: Option<vk::SurfaceFormatKHR>,
+        u_present_mode: Option<vk::PresentModeKHR>,
+    ) -> Result<Self, Error> {
+        let surface_format = if u_surface_format.is_some() {
+            unsafe {
+                surface
+                    .loader
+                    .get_physical_device_surface_formats(device.pdev, surface.surface)
+            }
+            .map_err(|_| Error::NoSurfaceFormatFound)?
+            .into_iter()
+            .find(|sf| {
+                sf.format == u_surface_format.unwrap().format
+                    && sf.color_space == u_surface_format.unwrap().color_space
+            })
+            .unwrap_or(vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_SRGB,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            })
+        } else {
+            vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_SRGB,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            }
+        };
 
-        let present_mode = unsafe {
-            surface
-                .loader
-                .get_physical_device_surface_present_modes(device.pdev, surface.surface)
-        }
-        .map_err(|_| Error::NoPresentModeFound)?
-        .into_iter()
-        .find(|&pm| pm == u_present_mode)
-        .unwrap_or(vk::PresentModeKHR::FIFO);
+        let present_mode = if u_present_mode.is_some() {
+            unsafe {
+                surface
+                    .loader
+                    .get_physical_device_surface_present_modes(device.pdev, surface.surface)
+            }
+            .map_err(|_| Error::NoPresentModeFound)?
+            .into_iter()
+            .find(|&pm| pm == u_present_mode.unwrap())
+            .unwrap_or(vk::PresentModeKHR::FIFO)
+        } else {
+            vk::PresentModeKHR::FIFO
+        };
 
         let capabilities = unsafe {
             surface
@@ -122,8 +135,8 @@ impl Swapchain<'_> {
             present_mode,
             sharing_mode,
             capabilities,
-            device,
-            surface,
+            device: Rc::clone(&device),
+            surface: Rc::clone(&surface),
         })
     }
 
@@ -224,5 +237,11 @@ impl Swapchain<'_> {
         )?;
 
         Ok(())
+    }
+}
+
+impl Drop for Swapchain {
+    fn drop(&mut self) {
+        self.destroy()
     }
 }
