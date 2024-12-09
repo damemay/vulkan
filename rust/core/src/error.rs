@@ -18,6 +18,11 @@ pub enum Error {
     NoSwapchainImages,
     SwapchainCreate,
     DeviceLost,
+    AllocationError,
+    MemoryBindingError,
+    BufferCreate,
+    ImageCreate,
+    ImageViewCreate,
 }
 
 impl std::error::Error for Error {}

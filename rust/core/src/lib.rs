@@ -1,3 +1,4 @@
+pub mod alloc;
 mod base;
 mod debug;
 mod device;
@@ -13,5 +14,5 @@ pub use surface::*;
 pub use swapchain::*;
 
 pub use ash;
-pub use vk_mem;
+pub use gpu_allocator;
 pub use winit;
