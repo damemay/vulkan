@@ -5,21 +5,82 @@ use core::{
         dpi::PhysicalSize,
         event::WindowEvent,
         event_loop::{ControlFlow, EventLoop},
-        raw_window_handle::{HasDisplayHandle, HasWindowHandle},
+        raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle},
         window::Window,
     },
     Base, Debug, Dev, DevRequestInfo, QueueRequestInfo, Surface, Swapchain,
 };
 use std::{error::Error, rc::Rc};
 
+pub struct Interface {
+    pub swapchain: Swapchain,
+    pub device: Rc<Dev>,
+    pub surface: Rc<Surface>,
+    pub debug: Option<Debug>,
+    pub base: Base,
+}
+
+impl Interface {
+    pub fn new(
+        display_handle: &RawDisplayHandle,
+        window_handle: &RawWindowHandle,
+    ) -> Result<Self, Box<dyn Error>> {
+        let base = Base::new(vk::API_VERSION_1_0, Some(display_handle))?;
+
+        let debug = if base.debug {
+            Some(Debug::new(&base.entry, &base.instance)?)
+        } else {
+            None
+        };
+
+        let surface = Rc::new(Surface::new(
+            &base.entry,
+            &base.instance,
+            display_handle,
+            window_handle,
+        )?);
+
+        let queues = vec![QueueRequestInfo {
+            flags: vk::QueueFlags::GRAPHICS,
+            present: true,
+        }];
+
+        let dev_info = DevRequestInfo {
+            queues,
+            extensions: vec![khr::swapchain::NAME],
+            preferred_type: None,
+            features: None,
+            features_2: None,
+        };
+
+        let device = Rc::new(Dev::new(&base.instance, Some(&surface), dev_info)?);
+
+        let swapchain = Swapchain::new(
+            &base.instance,
+            Rc::clone(&device),
+            Rc::clone(&surface),
+            vk::Extent2D {
+                width: 1280,
+                height: 720,
+            },
+            None,
+            None,
+        )?;
+
+        Ok(Self {
+            swapchain,
+            device,
+            surface,
+            debug,
+            base,
+        })
+    }
+}
+
 #[derive(Default)]
 struct TestApp {
     window: Option<Window>,
-    swapchain: Option<Swapchain>,
-    device: Option<Rc<Dev>>,
-    surface: Option<Rc<Surface>>,
-    debug: Option<Debug>,
-    base: Option<Base>,
+    vk: Option<Interface>,
 }
 
 impl ApplicationHandler for TestApp {
@@ -39,59 +100,16 @@ impl ApplicationHandler for TestApp {
                     }),
             )
             .unwrap();
-        let base = Base::new(
-            vk::API_VERSION_1_0,
-            Some(&window.display_handle().unwrap().as_raw()),
-        )
-        .unwrap();
-        let debug = if base.debug {
-            Some(Debug::new(&base.entry, &base.instance).unwrap())
-        } else {
-            None
-        };
-        let surface = Rc::new(
-            Surface::new(
-                &base.entry,
-                &base.instance,
-                &window.display_handle().unwrap().as_raw(),
-                &window.window_handle().unwrap().as_raw(),
-            )
-            .unwrap(),
-        );
 
-        let queues = vec![QueueRequestInfo {
-            flags: vk::QueueFlags::GRAPHICS,
-            present: true,
-        }];
-
-        let dev_info = DevRequestInfo {
-            queues,
-            extensions: vec![khr::swapchain::NAME],
-            preferred_type: None,
-            features: None,
-            features_2: None,
-        };
-        let device = Rc::new(Dev::new(&base.instance, Some(&surface), dev_info).unwrap());
-        let swapchain = Swapchain::new(
-            &base.instance,
-            Rc::clone(&device),
-            Rc::clone(&surface),
-            vk::Extent2D {
-                width: 1280,
-                height: 720,
-            },
-            None,
-            None,
+        let interface = Interface::new(
+            &window.display_handle().unwrap().as_raw(),
+            &window.window_handle().unwrap().as_raw(),
         )
         .unwrap();
 
         window.set_visible(true);
         self.window = Some(window);
-        self.base = Some(base);
-        self.debug = debug;
-        self.surface = Some(surface);
-        self.device = Some(device);
-        self.swapchain = Some(swapchain);
+        self.vk = Some(interface);
     }
 
     fn window_event(
@@ -102,6 +120,14 @@ impl ApplicationHandler for TestApp {
     ) {
         match event {
             WindowEvent::RedrawRequested => self.window.as_ref().unwrap().request_redraw(),
+            WindowEvent::Resized(size) => {
+                self.vk
+                    .as_mut()
+                    .unwrap()
+                    .swapchain
+                    .recreate(size.width, size.height)
+                    .unwrap();
+            }
             WindowEvent::CloseRequested => event_loop.exit(),
             _ => (),
         }

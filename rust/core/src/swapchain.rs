@@ -1,5 +1,4 @@
 use ash::{khr, vk};
-use std::borrow::Cow;
 use std::rc::Rc;
 
 use crate::{Dev, Error, Surface};
