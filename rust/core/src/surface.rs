@@ -2,6 +2,13 @@ use crate::error::Error;
 use ash::{khr, vk};
 use winit::raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
+pub struct SurfaceRequestInfo<'a> {
+    pub entry: &'a ash::Entry,
+    pub instance: &'a ash::Instance,
+    pub raw_display_handle: &'a RawDisplayHandle,
+    pub raw_window_handle: &'a RawWindowHandle,
+}
+
 #[derive(Clone)]
 pub struct Surface {
     pub loader: khr::surface::Instance,
@@ -9,23 +16,18 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn new(
-        entry: &ash::Entry,
-        instance: &ash::Instance,
-        raw_display_handle: &RawDisplayHandle,
-        raw_window_handle: &RawWindowHandle,
-    ) -> Result<Self, Error> {
+    pub fn new(info: SurfaceRequestInfo) -> Result<Self, Error> {
         let surface = unsafe {
             ash_window::create_surface(
-                entry,
-                instance,
-                *raw_display_handle,
-                *raw_window_handle,
+                info.entry,
+                info.instance,
+                *info.raw_display_handle,
+                *info.raw_window_handle,
                 None,
             )
         }
         .map_err(|_| Error::SurfaceCreate)?;
-        let loader = khr::surface::Instance::new(entry, instance);
+        let loader = khr::surface::Instance::new(info.entry, info.instance);
         Ok(Self { loader, surface })
     }
 }

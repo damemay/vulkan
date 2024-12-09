@@ -1,5 +1,5 @@
 use core::{
-    alloc,
+    alloc::{self, BufferRequestInfo, ImageRequestInfo},
     ash::{khr, vk},
     gpu_allocator::{
         vulkan::{AllocationScheme, Allocator, AllocatorCreateDesc},
@@ -13,7 +13,8 @@ use core::{
         raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle},
         window::Window,
     },
-    Base, Debug, Dev, DevRequestInfo, QueueRequestInfo, Surface, Swapchain,
+    Base, Debug, Dev, DevRequestInfo, QueueRequestInfo, Surface, SurfaceRequestInfo, Swapchain,
+    SwapchainRequestInfo,
 };
 use std::{cell::RefCell, error::Error, rc::Rc};
 
@@ -39,12 +40,12 @@ impl Interface {
             None
         };
 
-        let surface = Rc::new(Surface::new(
-            &base.entry,
-            &base.instance,
-            display_handle,
-            window_handle,
-        )?);
+        let surface = Rc::new(Surface::new(SurfaceRequestInfo {
+            entry: &base.entry,
+            instance: &base.instance,
+            raw_display_handle: display_handle,
+            raw_window_handle: window_handle,
+        })?);
 
         let mut features_13 = vk::PhysicalDeviceVulkan13Features::default()
             .dynamic_rendering(true)
@@ -59,40 +60,42 @@ impl Interface {
             .push_next(&mut features_13)
             .push_next(&mut features_12);
 
-        let dev_info = DevRequestInfo {
+        let device = Rc::new(Dev::new(DevRequestInfo {
+            instance: &base.instance,
+            surface: Some(&surface),
             queues: vec![QueueRequestInfo {
                 flags: vk::QueueFlags::GRAPHICS,
                 present: true,
             }],
             extensions: vec![khr::swapchain::NAME],
+            preferred_type: None,
+            features: None,
             features_2: Some(features_2),
-            ..Default::default()
-        };
+        })?);
 
-        let device = Rc::new(Dev::new(&base.instance, Some(&surface), dev_info)?);
-
-        let swapchain = Swapchain::new(
-            &base.instance,
-            &device,
-            &surface,
-            vk::Extent2D {
+        let swapchain = Swapchain::new(SwapchainRequestInfo {
+            instance: &base.instance,
+            device: &device,
+            surface: &surface,
+            extent: vk::Extent2D {
                 width: 1280,
                 height: 720,
             },
-            None,
-            None,
-        )?;
+            surface_format: None,
+            present_mode: None,
+        })?;
 
-        let alloc_desc = AllocatorCreateDesc {
-            instance: base.instance.clone(),
-            device: device.dev.clone(),
-            physical_device: device.pdev,
-            debug_settings: Default::default(),
-            buffer_device_address: true,
-            allocation_sizes: Default::default(),
-        };
-
-        let allocator = Rc::new(RefCell::new(Allocator::new(&alloc_desc).unwrap()));
+        let allocator = Rc::new(RefCell::new(
+            Allocator::new(&AllocatorCreateDesc {
+                instance: base.instance.clone(),
+                device: device.dev.clone(),
+                physical_device: device.pdev,
+                debug_settings: Default::default(),
+                buffer_device_address: true,
+                allocation_sizes: Default::default(),
+            })
+            .unwrap(),
+        ));
 
         Ok(Self {
             allocator,
@@ -106,55 +109,52 @@ impl Interface {
 
     fn alloc_test(&mut self) {
         {
-            let buf_info = vk::BufferCreateInfo::default()
-                .size(512)
-                .usage(vk::BufferUsageFlags::TRANSFER_SRC);
-            let _ = alloc::Buffer::new(
-                &self.allocator,
-                &self.device,
-                true,
-                MemoryLocation::CpuToGpu,
-                true,
-                &buf_info,
-            )
+            let _ = alloc::Buffer::new(&BufferRequestInfo {
+                allocator: &self.allocator,
+                device: &self.device,
+                linear: true,
+                location: MemoryLocation::CpuToGpu,
+                dedicated: true,
+                info: &vk::BufferCreateInfo::default()
+                    .size(512)
+                    .usage(vk::BufferUsageFlags::TRANSFER_SRC),
+            })
             .unwrap();
         }
-        let img_info = vk::ImageCreateInfo::default()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(vk::Format::R16G16B16A16_SFLOAT)
-            .extent(vk::Extent3D {
-                width: self.swapchain.extent.width,
-                height: self.swapchain.extent.height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(
-                vk::ImageUsageFlags::COLOR_ATTACHMENT
-                    | vk::ImageUsageFlags::STORAGE
-                    | vk::ImageUsageFlags::TRANSFER_SRC
-                    | vk::ImageUsageFlags::TRANSFER_DST,
-            );
-        let imgv_info = vk::ImageViewCreateInfo::default()
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(vk::Format::R16G16B16A16_SFLOAT)
-            .subresource_range(
-                vk::ImageSubresourceRange::default()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .level_count(1)
-                    .layer_count(1),
-            );
-        let _ = alloc::Image::new(
-            &self.allocator,
-            &self.device,
-            false,
-            MemoryLocation::GpuOnly,
-            true,
-            &img_info,
-            &imgv_info,
-        )
+        let _ = alloc::Image::new(&ImageRequestInfo {
+            allocator: &self.allocator,
+            device: &self.device,
+            linear: false,
+            location: MemoryLocation::GpuOnly,
+            dedicated: true,
+            img_info: &vk::ImageCreateInfo::default()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(vk::Format::R16G16B16A16_SFLOAT)
+                .extent(vk::Extent3D {
+                    width: self.swapchain.extent.width,
+                    height: self.swapchain.extent.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(
+                    vk::ImageUsageFlags::COLOR_ATTACHMENT
+                        | vk::ImageUsageFlags::STORAGE
+                        | vk::ImageUsageFlags::TRANSFER_SRC
+                        | vk::ImageUsageFlags::TRANSFER_DST,
+                ),
+            img_view_info: &vk::ImageViewCreateInfo::default()
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(vk::Format::R16G16B16A16_SFLOAT)
+                .subresource_range(
+                    vk::ImageSubresourceRange::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .level_count(1)
+                        .layer_count(1),
+                ),
+        })
         .unwrap();
     }
 }

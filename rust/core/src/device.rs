@@ -19,8 +19,9 @@ pub struct QueueInfo {
     pub present: bool,
 }
 
-#[derive(Default)]
 pub struct DevRequestInfo<'a> {
+    pub instance: &'a ash::Instance,
+    pub surface: Option<&'a Surface>,
     pub queues: Vec<QueueRequestInfo>,
     pub extensions: Vec<&'a CStr>,
     pub preferred_type: Option<vk::PhysicalDeviceType>,
@@ -39,18 +40,14 @@ pub struct Dev {
 }
 
 impl Dev {
-    pub fn new(
-        instance: &ash::Instance,
-        surface: Option<&Surface>,
-        info: DevRequestInfo,
-    ) -> Result<Self, Error> {
-        let pdev = Self::get_physical_device(instance, &info)?;
-        let queues = Self::get_queue_indices(instance, &pdev, surface, &info)?;
+    pub fn new(info: DevRequestInfo) -> Result<Self, Error> {
+        let pdev = Self::get_physical_device(info.instance, &info)?;
+        let queues = Self::get_queue_indices(info.instance, &pdev, info.surface, &info)?;
         let unique_indices: Vec<u32> = {
             let set: HashSet<u32> = queues.iter().map(|x| x.1.index).collect();
             set.into_iter().collect()
         };
-        let dev = Self::create_device(instance, &pdev, &unique_indices, &info)?;
+        let dev = Self::create_device(&pdev, &unique_indices, &info)?;
         Ok(Self {
             dev,
             pdev,
@@ -144,7 +141,6 @@ impl Dev {
     }
 
     fn create_device(
-        instance: &ash::Instance,
         pdev: &vk::PhysicalDevice,
         unique_indices: &Vec<u32>,
         info: &DevRequestInfo,
@@ -173,7 +169,7 @@ impl Dev {
             device_info.p_next = &info.features_2.unwrap() as *const _ as *const c_void;
         }
 
-        unsafe { instance.create_device(*pdev, &device_info, None) }
+        unsafe { info.instance.create_device(*pdev, &device_info, None) }
             .map_err(|_| Error::DeviceCreate)
     }
 }

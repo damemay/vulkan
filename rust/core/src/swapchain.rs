@@ -3,6 +3,15 @@ use std::rc::Rc;
 
 use crate::{Dev, Error, Surface};
 
+pub struct SwapchainRequestInfo<'a> {
+    pub instance: &'a ash::Instance,
+    pub device: &'a Rc<Dev>,
+    pub surface: &'a Rc<Surface>,
+    pub extent: vk::Extent2D,
+    pub surface_format: Option<vk::SurfaceFormatKHR>,
+    pub present_mode: Option<vk::PresentModeKHR>,
+}
+
 pub struct Swapchain {
     pub loader: khr::swapchain::Device,
     pub handle: vk::SwapchainKHR,
@@ -22,25 +31,18 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub fn new<'a>(
-        instance: &ash::Instance,
-        device: &Rc<Dev>,
-        surface: &Rc<Surface>,
-        u_extent: vk::Extent2D,
-        u_surface_format: Option<vk::SurfaceFormatKHR>,
-        u_present_mode: Option<vk::PresentModeKHR>,
-    ) -> Result<Self, Error> {
-        let surface_format = if u_surface_format.is_some() {
+    pub fn new(info: SwapchainRequestInfo) -> Result<Self, Error> {
+        let surface_format = if info.surface_format.is_some() {
             unsafe {
-                surface
+                info.surface
                     .loader
-                    .get_physical_device_surface_formats(device.pdev, surface.surface)
+                    .get_physical_device_surface_formats(info.device.pdev, info.surface.surface)
             }
             .map_err(|_| Error::NoSurfaceFormatFound)?
             .into_iter()
             .find(|sf| {
-                sf.format == u_surface_format.unwrap().format
-                    && sf.color_space == u_surface_format.unwrap().color_space
+                sf.format == info.surface_format.unwrap().format
+                    && sf.color_space == info.surface_format.unwrap().color_space
             })
             .unwrap_or(vk::SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_SRGB,
@@ -53,24 +55,27 @@ impl Swapchain {
             }
         };
 
-        let present_mode = if u_present_mode.is_some() {
+        let present_mode = if info.present_mode.is_some() {
             unsafe {
-                surface
+                info.surface
                     .loader
-                    .get_physical_device_surface_present_modes(device.pdev, surface.surface)
+                    .get_physical_device_surface_present_modes(
+                        info.device.pdev,
+                        info.surface.surface,
+                    )
             }
             .map_err(|_| Error::NoPresentModeFound)?
             .into_iter()
-            .find(|&pm| pm == u_present_mode.unwrap())
+            .find(|&pm| pm == info.present_mode.unwrap())
             .unwrap_or(vk::PresentModeKHR::FIFO)
         } else {
             vk::PresentModeKHR::FIFO
         };
 
         let capabilities = unsafe {
-            surface
+            info.surface
                 .loader
-                .get_physical_device_surface_capabilities(device.pdev, surface.surface)
+                .get_physical_device_surface_capabilities(info.device.pdev, info.surface.surface)
         }
         .map_err(|_| Error::NoSurfaceCapabilitiesFound)?;
 
@@ -78,11 +83,11 @@ impl Swapchain {
             capabilities.current_extent
         } else {
             vk::Extent2D {
-                width: u_extent.width.clamp(
+                width: info.extent.width.clamp(
                     capabilities.min_image_extent.width,
                     capabilities.max_image_extent.width,
                 ),
-                height: u_extent.height.clamp(
+                height: info.extent.height.clamp(
                     capabilities.min_image_extent.height,
                     capabilities.max_image_extent.height,
                 ),
@@ -95,14 +100,14 @@ impl Swapchain {
             capabilities.min_image_count + 1
         };
 
-        let sharing_mode = if device.unique_indices.len() > 1 {
+        let sharing_mode = if info.device.unique_indices.len() > 1 {
             vk::SharingMode::CONCURRENT
         } else {
             vk::SharingMode::EXCLUSIVE
         };
 
         let swapchain_info = vk::SwapchainCreateInfoKHR::default()
-            .surface(surface.surface)
+            .surface(info.surface.surface)
             .min_image_count(image_count)
             .image_format(surface_format.format)
             .image_color_space(surface_format.color_space)
@@ -110,18 +115,18 @@ impl Swapchain {
             .image_array_layers(1)
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
             .image_sharing_mode(sharing_mode)
-            .queue_family_indices(&device.unique_indices)
+            .queue_family_indices(&info.device.unique_indices)
             .pre_transform(capabilities.current_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
             .present_mode(present_mode)
             .clipped(true);
 
-        let loader = khr::swapchain::Device::new(instance, &device.dev);
+        let loader = khr::swapchain::Device::new(info.instance, &info.device.dev);
         let handle = unsafe { loader.create_swapchain(&swapchain_info, None) }
             .map_err(|_| Error::SwapchainCreate)?;
 
         let (images, image_views) =
-            Self::get_images(&device.dev, &loader, &handle, surface_format.format)?;
+            Self::get_images(&info.device.dev, &loader, &handle, surface_format.format)?;
 
         Ok(Swapchain {
             loader,
@@ -134,8 +139,8 @@ impl Swapchain {
             present_mode,
             sharing_mode,
             capabilities,
-            device: Rc::clone(&device),
-            surface: Rc::clone(&surface),
+            device: Rc::clone(&info.device),
+            surface: Rc::clone(&info.surface),
         })
     }
 
