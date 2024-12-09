@@ -19,6 +19,7 @@ pub struct QueueInfo {
     pub present: bool,
 }
 
+#[derive(Default)]
 pub struct DevRequestInfo<'a> {
     pub queues: Vec<QueueRequestInfo>,
     pub extensions: Vec<&'a CStr>,
@@ -169,7 +170,7 @@ impl Dev {
         }
 
         if info.features_2.is_some() {
-            device_info.p_next = &info.features_2 as *const _ as *const c_void;
+            device_info.p_next = &info.features_2.unwrap() as *const _ as *const c_void;
         }
 
         unsafe { instance.create_device(*pdev, &device_info, None) }

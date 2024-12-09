@@ -25,7 +25,7 @@ impl Interface {
         display_handle: &RawDisplayHandle,
         window_handle: &RawWindowHandle,
     ) -> Result<Self, Box<dyn Error>> {
-        let base = Base::new(vk::API_VERSION_1_0, Some(display_handle))?;
+        let base = Base::new(vk::API_VERSION_1_3, Some(display_handle))?;
 
         let debug = if base.debug {
             Some(Debug::new(&base.entry, &base.instance)?)
@@ -40,17 +40,27 @@ impl Interface {
             window_handle,
         )?);
 
-        let queues = vec![QueueRequestInfo {
-            flags: vk::QueueFlags::GRAPHICS,
-            present: true,
-        }];
+        let mut features_13 = vk::PhysicalDeviceVulkan13Features::default()
+            .dynamic_rendering(true)
+            .synchronization2(true)
+            .maintenance4(true);
+        let mut features_12 = vk::PhysicalDeviceVulkan12Features::default()
+            .descriptor_indexing(true)
+            .buffer_device_address(true);
+        let features = vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true);
+        let features_2 = vk::PhysicalDeviceFeatures2::default()
+            .features(features)
+            .push_next(&mut features_13)
+            .push_next(&mut features_12);
 
         let dev_info = DevRequestInfo {
-            queues,
+            queues: vec![QueueRequestInfo {
+                flags: vk::QueueFlags::GRAPHICS,
+                present: true,
+            }],
             extensions: vec![khr::swapchain::NAME],
-            preferred_type: None,
-            features: None,
-            features_2: None,
+            features_2: Some(features_2),
+            ..Default::default()
         };
 
         let device = Rc::new(Dev::new(&base.instance, Some(&surface), dev_info)?);
