@@ -9,7 +9,6 @@
 #include <vulkan/vulkan.hpp>
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #include <GLFW/glfw3.h>
-#include <stdexcept>
 #include <vector>
 #include <vk_mem_alloc.h>
 
@@ -27,6 +26,10 @@ enum class err {
     swapchain_create,
     buffer_create,
     image_create,
+    module_create,
+    file,
+    glfw,
+    vma,
 };
 
 VmaAllocator init_vma(VmaAllocationCreateFlags flags, vk::PhysicalDevice pdev, vk::Device dev,
@@ -96,10 +99,11 @@ struct swp {
 
     vk::Device dev;
 
-    swp(swp_init_info info, vk::Device dev);
-    err create(vk::PhysicalDevice pdev, vk::SurfaceKHR surface);
-    err recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceKHR surface);
+    swp() = default;
     ~swp();
+
+    err create(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface, swp_init_info info);
+    err recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceKHR surface);
 
     operator vk::SwapchainKHR() { return swapchain; }
     operator vk::SwapchainKHR &() { return swapchain; }
@@ -121,8 +125,11 @@ struct buf {
     buf() = default;
     ~buf();
 
-    err create(vk::BufferCreateInfo buf_info, VmaAllocationCreateInfo alloc_info,
-               VmaAllocator alloc);
+    err create(VmaAllocator alloc, vk::BufferCreateInfo buf_info,
+               VmaAllocationCreateInfo alloc_info);
+
+    err create(VmaAllocator alloc, const size_t size, vk::BufferUsageFlags buf_usage,
+               VmaMemoryUsage mem_usage);
 
     operator vk::Buffer() { return buffer; }
     operator vk::Buffer &() { return buffer; }
@@ -131,12 +138,11 @@ struct buf {
 
 struct img {
     vk::Image image;
-    vk::ImageView imageview;
+    vk::ImageView image_view;
     VmaAllocation allocation;
 
-    vk::Extent3D extent;
-    vk::Format format;
-    uint32_t mip_level = 1;
+    vk::ImageCreateInfo img_info;
+    vk::ImageViewCreateInfo img_view_info;
 
     vk::Device dev;
     VmaAllocator allocator;
@@ -144,14 +150,32 @@ struct img {
     img() = default;
     ~img();
 
-    err create(vk::ImageCreateInfo img_info, vk::ImageViewCreateInfo imgv_info,
-               VmaAllocationCreateInfo alloc_info, vk::Device dev, VmaAllocator alloc);
+    err create(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
+               vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info);
+
+    err create(vk::Device dev, VmaAllocator alloc, vk::Extent2D extent, vk::ImageUsageFlags usage,
+               vk::ImageAspectFlagBits aspect, vk::Format format = vk::Format::eB8G8R8A8Srgb,
+               vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1, uint32_t mipmaps = 1);
 
     operator vk::Image() { return image; }
     operator vk::Image &() { return image; }
     operator VkImage() { return (VkImage)image; }
-    operator vk::ImageView() { return imageview; }
-    operator vk::ImageView &() { return imageview; }
-    operator VkImageView() { return (VkImageView)imageview; }
+    operator vk::ImageView() { return image_view; }
+    operator vk::ImageView &() { return image_view; }
+    operator VkImageView() { return (VkImageView)image_view; }
+};
+
+struct shm {
+    vk::ShaderModule module;
+    vk::Device dev;
+
+    shm() = default;
+    ~shm();
+
+    err create(vk::Device dev, const char *path);
+
+    operator vk::ShaderModule() { return module; }
+    operator vk::ShaderModule &() { return module; }
+    operator VkShaderModule() { return (VkShaderModule)module; }
 };
 } // namespace vki

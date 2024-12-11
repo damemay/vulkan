@@ -1,5 +1,6 @@
 #include "vki.h"
 #include <algorithm>
+#include <fstream>
 #include <set>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -181,7 +182,8 @@ err base::create_device(dev_info *info) {
     return err::ok;
 }
 
-swp::swp(swp_init_info info, vk::Device dev) {
+err swp::create(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface,
+                swp_init_info info) {
     surface_format = info.surface_format;
     present_mode = info.present_mode;
     this->dev = dev;
@@ -192,9 +194,7 @@ swp::swp(swp_init_info info, vk::Device dev) {
     unique_queue_family_indices = std::vector<uint32_t>(uqfi.begin(), uqfi.end());
     sharing_mode = unique_queue_family_indices.size() > 1 ? vk::SharingMode::eConcurrent
                                                           : vk::SharingMode::eExclusive;
-}
 
-err swp::create(vk::PhysicalDevice pdev, vk::SurfaceKHR surface) {
     auto swp_i = ci(extent, surface, pdev);
 
     auto [res, vkswp] = dev.createSwapchainKHR(swp_i);
@@ -304,8 +304,8 @@ vk::SwapchainCreateInfoKHR swp::ci(vk::Extent2D ext, vk::SurfaceKHR surface,
 
 buf::~buf() { vmaDestroyBuffer(allocator, buffer, allocation); }
 
-err buf::create(vk::BufferCreateInfo buf_info, VmaAllocationCreateInfo alloc_info,
-                VmaAllocator alloc) {
+err buf::create(VmaAllocator alloc, vk::BufferCreateInfo buf_info,
+                VmaAllocationCreateInfo alloc_info) {
     allocator = alloc;
 
     if (vmaCreateBuffer(allocator, (VkBufferCreateInfo *)&buf_info, &alloc_info,
@@ -314,13 +314,32 @@ err buf::create(vk::BufferCreateInfo buf_info, VmaAllocationCreateInfo alloc_inf
     return err::ok;
 }
 
-err img::create(vk::ImageCreateInfo img_info, vk::ImageViewCreateInfo imgv_info,
-                VmaAllocationCreateInfo alloc_info, vk::Device dev, VmaAllocator alloc) {
+err buf::create(VmaAllocator alloc, const size_t size, vk::BufferUsageFlags buf_usage,
+                VmaMemoryUsage mem_usage) {
+    vk::BufferCreateInfo buf_info = {
+        .size = size,
+        .usage = buf_usage,
+    };
+
+    VmaAllocationCreateInfo alloc_info = {
+        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
+        .usage = mem_usage,
+    };
+
+    return create(alloc, buf_info, alloc_info);
+}
+
+img::~img() {
+    vmaDestroyImage(allocator, image, allocation);
+    dev.destroyImageView(image_view);
+}
+
+err img::create(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
+                vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info) {
     this->dev = dev;
     allocator = alloc;
-    mip_level = img_info.mipLevels;
-    format = img_info.format;
-    extent = img_info.extent;
+    this->img_info = img_info;
+    this->img_view_info = imgv_info;
 
     if (vmaCreateImage(allocator, (VkImageCreateInfo *)&img_info, &alloc_info, (VkImage *)&image,
                        &allocation, nullptr) != VK_SUCCESS)
@@ -333,12 +352,60 @@ err img::create(vk::ImageCreateInfo img_info, vk::ImageViewCreateInfo imgv_info,
         return err::image_create;
     }
 
-    imageview = vkiv;
+    image_view = vkiv;
     return err::ok;
 }
 
-img::~img() {
-    vmaDestroyImage(allocator, image, allocation);
-    dev.destroyImageView(imageview);
+err img::create(vk::Device dev, VmaAllocator alloc, vk::Extent2D extent, vk::ImageUsageFlags usage,
+                vk::ImageAspectFlagBits aspect, vk::Format format, vk::SampleCountFlagBits samples,
+                uint32_t mipmaps) {
+    vk::ImageCreateInfo img_info = {
+        .imageType = vk::ImageType::e2D,
+        .format = format,
+        .extent = vk::Extent3D{extent.width, extent.height, 1},
+        .mipLevels = mipmaps,
+        .arrayLayers = 1,
+        .samples = samples,
+        .tiling = vk::ImageTiling::eOptimal,
+        .usage = usage,
+    };
+
+    vk::ImageViewCreateInfo imgv_info = {
+        .viewType = vk::ImageViewType::e2D,
+        .format = format,
+        .subresourceRange = {.aspectMask = aspect, .levelCount = mipmaps, .layerCount = 1},
+    };
+
+    VmaAllocationCreateInfo alloc_info = {
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+        .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+    };
+
+    return create(dev, alloc, img_info, imgv_info, alloc_info);
+}
+
+shm::~shm() { dev.destroyShaderModule(module); }
+
+err shm::create(vk::Device dev, const char *path) {
+    this->dev = dev;
+
+    std::ifstream file{path, std::ios::binary};
+    if (!file.is_open())
+        return err::file;
+    std::vector<char> buffer(std::istreambuf_iterator<char>(file), {});
+    file.close();
+
+    vk::ShaderModuleCreateInfo info = {
+        .codeSize = buffer.size() * sizeof(char),
+        .pCode = (uint32_t *)buffer.data(),
+    };
+
+    auto [res, vks] = dev.createShaderModule(info);
+    if (res != vk::Result::eSuccess)
+        return err::module_create;
+
+    module = vks;
+
+    return err::ok;
 }
 } // namespace vki

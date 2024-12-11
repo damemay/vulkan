@@ -33,10 +33,16 @@ set(VKI_LIBS
     vki GPUOpen::VulkanMemoryAllocator glfw
     PARENT_SCOPE)
 
-add_library(${PROJECT_NAME} vki.cc ext.cc)
+add_library(${PROJECT_NAME} vki.cc ext.cc vki_app.cc)
 set_target_properties(
   ${PROJECT_NAME}
   PROPERTIES CXX_STANDARD_REQUIRED ON
              CXX_STANDARD 20
              INCLUDE_DIRECTORIES "${VKI_INCLUDES}"
              LINK_LIBRARIES "${VKI_LIBS}")
+
+option(VKI_BUILD_TEST "Build Test" OFF)
+if(VKI_BUILD_TEST)
+  add_executable(vki_test sample.cc)
+  target_link_libraries(vki_test vki GPUOpen::VulkanMemoryAllocator glfw)
+endif()
