@@ -8,13 +8,12 @@ use core::winit::{
 };
 use std::error::Error;
 
-mod interface;
-use interface::Interface;
+use iface::*;
 
 #[derive(Default)]
 struct TestApp {
     window: Option<Window>,
-    vk: Option<Interface>,
+    vk: Option<GeneralContext>,
 }
 
 impl ApplicationHandler for TestApp {
@@ -35,17 +34,18 @@ impl ApplicationHandler for TestApp {
             )
             .unwrap();
 
-        let mut interface = Interface::new(
-            &window.display_handle().unwrap().as_raw(),
-            &window.window_handle().unwrap().as_raw(),
-        )
+        let vk = GeneralContext::new(GeneralContextRequestInfo {
+            debug: true,
+            width: 1280,
+            height: 720,
+            display_handle: &window.display_handle().unwrap().as_raw(),
+            window_handle: &window.window_handle().unwrap().as_raw(),
+        })
         .unwrap();
-
-        interface.alloc_test();
 
         window.set_visible(true);
         self.window = Some(window);
-        self.vk = Some(interface);
+        self.vk = Some(vk);
     }
 
     fn window_event(
@@ -60,7 +60,8 @@ impl ApplicationHandler for TestApp {
                 self.vk
                     .as_mut()
                     .unwrap()
-                    .resize(size.width, size.height)
+                    .swapchain
+                    .recreate(size.width, size.height)
                     .unwrap();
             }
             WindowEvent::CloseRequested => event_loop.exit(),

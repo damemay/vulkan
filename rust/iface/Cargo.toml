@@ -1,8 +1,7 @@
 [package]
-name = "test-app"
+name = "iface"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 core = { path = "../core" }
-iface = { path = "../iface" }
