@@ -456,4 +456,47 @@ bool shm::create(vk::Device dev, const char *path) {
 
     return true;
 }
+
+vk::PipelineShaderStageCreateInfo shm::stage_info(vk::ShaderStageFlagBits stage, void *p_next,
+                                                  vk::PipelineShaderStageCreateFlags flags) {
+    return vk::PipelineShaderStageCreateInfo{
+        .pNext = p_next,
+        .flags = flags,
+        .stage = stage,
+        .module = module,
+        .pName = "main",
+        .pSpecializationInfo = nullptr,
+    };
+}
+
+gfxp::~gfxp() { dev.destroyPipeline(pipeline); }
+
+bool gfxp::create(vk::Device dev, vk::PipelineLayout layout, vk::RenderPass render_pass,
+                  uint32_t subpass, vk::PipelineCache cache, void *p_next,
+                  vk::PipelineCreateFlags flags) {
+    info.layout = layout;
+    info.renderPass = render_pass;
+    info.subpass = subpass;
+    info.pNext = p_next;
+    info.flags = flags;
+    this->dev = dev;
+
+    auto [res, vkp] = dev.createGraphicsPipeline(cache, info);
+    if (res != vk::Result::eSuccess)
+        return false;
+
+    pipeline = vkp;
+
+    return true;
+}
+
+bool gfxp::create(vk::Device dev, vk::PipelineLayout layout, vk::RenderPass render_pass,
+                  uint32_t subpass, vk::PipelineCache cache, vk::PipelineCreateFlags flags) {
+    return create(dev, layout, render_pass, subpass, cache, nullptr, flags);
+}
+
+bool gfxp::create(vk::Device dev, vk::PipelineLayout layout, void *p_next, vk::PipelineCache cache,
+                  vk::PipelineCreateFlags flags) {
+    return create(dev, layout, nullptr, 0, cache, p_next, flags);
+}
 } // namespace vki

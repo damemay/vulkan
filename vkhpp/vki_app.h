@@ -1,7 +1,6 @@
 #pragma once
 
 #include "vki.h"
-#include <memory>
 
 namespace vki {
 struct frm {

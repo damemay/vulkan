@@ -48,9 +48,10 @@ struct base {
     ~base();
 
     bool create(uint32_t api, bool debug, GLFWwindow *window = nullptr);
+    bool create_device(dev_info *info);
+
     bool check_device_extensions(std::span<const char *> extensions);
     bool check_device_queues(std::span<queue_info> queues);
-    bool create_device(dev_info *info);
 
     operator vk::Instance() { return instance; }
     operator vk::Instance &() { return instance; }
@@ -93,6 +94,7 @@ struct swp {
 
     bool create(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface,
                 swp_init_info info);
+
     bool recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceKHR surface);
 
     operator vk::SwapchainKHR() { return swapchain; }
@@ -165,8 +167,95 @@ struct shm {
 
     bool create(vk::Device dev, const char *path);
 
+    vk::PipelineShaderStageCreateInfo
+    stage_info(vk::ShaderStageFlagBits stage, void *p_next = nullptr,
+               vk::PipelineShaderStageCreateFlags flags = vk::PipelineShaderStageCreateFlags(0));
+
     operator vk::ShaderModule() { return module; }
     operator vk::ShaderModule &() { return module; }
     operator VkShaderModule() { return (VkShaderModule)module; }
+};
+
+struct gfxp {
+    std::vector<vk::PipelineShaderStageCreateInfo> shader_stages = {};
+
+    std::vector<vk::PipelineColorBlendAttachmentState> color_blend_attachments = {
+        {
+            .blendEnable = vk::False,
+            .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+        },
+    };
+
+    std::vector<vk::DynamicState> dynamic_states = {
+        vk::DynamicState::eViewport,
+        vk::DynamicState::eScissor,
+    };
+
+    vk::PipelineVertexInputStateCreateInfo vertex_info = {};
+    vk::PipelineInputAssemblyStateCreateInfo assembly_info = {
+        .topology = vk::PrimitiveTopology::eTriangleList,
+    };
+    vk::PipelineTessellationStateCreateInfo tesselation_info = {};
+    vk::PipelineViewportStateCreateInfo viewport_info = {
+        .viewportCount = 1,
+        .scissorCount = 1,
+    };
+    vk::PipelineRasterizationStateCreateInfo rasterization_info = {
+        .polygonMode = vk::PolygonMode::eFill,
+        .cullMode = vk::CullModeFlagBits::eBack,
+        .frontFace = vk::FrontFace::eClockwise,
+    };
+    vk::PipelineMultisampleStateCreateInfo multisample_info = {
+        .rasterizationSamples = vk::SampleCountFlagBits::e1,
+        .sampleShadingEnable = vk::False,
+    };
+    vk::PipelineDepthStencilStateCreateInfo depth_stencil_info = {
+        .depthCompareOp = vk::CompareOp::eLess,
+        .minDepthBounds = 0.0f,
+        .maxDepthBounds = 1.0f,
+    };
+    vk::PipelineColorBlendStateCreateInfo color_blend_info = {
+        .logicOpEnable = vk::False,
+        .logicOp = vk::LogicOp::eCopy,
+        .attachmentCount = (uint32_t)color_blend_attachments.size(),
+        .pAttachments = color_blend_attachments.data(),
+    };
+    vk::PipelineDynamicStateCreateInfo dynamic_info = {
+        .dynamicStateCount = (uint32_t)dynamic_states.size(),
+        .pDynamicStates = dynamic_states.data(),
+    };
+
+    vk::GraphicsPipelineCreateInfo info = {
+        .stageCount = (uint32_t)shader_stages.size(),
+        .pStages = shader_stages.data(),
+        .pVertexInputState = &vertex_info,
+        .pInputAssemblyState = &assembly_info,
+        .pTessellationState = &tesselation_info,
+        .pViewportState = &viewport_info,
+        .pRasterizationState = &rasterization_info,
+        .pMultisampleState = &multisample_info,
+        .pDepthStencilState = &depth_stencil_info,
+        .pColorBlendState = &color_blend_info,
+        .pDynamicState = &dynamic_info,
+    };
+
+    vk::Pipeline pipeline;
+    vk::Device dev;
+
+    gfxp() = default;
+    ~gfxp();
+
+    bool create(vk::Device dev, vk::PipelineLayout layout, vk::RenderPass render_pass,
+                uint32_t subpass, vk::PipelineCache cache, void *p_next,
+                vk::PipelineCreateFlags flags);
+
+    bool create(vk::Device dev, vk::PipelineLayout layout, vk::RenderPass render_pass,
+                uint32_t subpass = 0, vk::PipelineCache cache = nullptr,
+                vk::PipelineCreateFlags flags = vk::PipelineCreateFlags(0));
+
+    bool create(vk::Device dev, vk::PipelineLayout layout, void *p_next,
+                vk::PipelineCache cache = nullptr,
+                vk::PipelineCreateFlags flags = vk::PipelineCreateFlags(0));
 };
 } // namespace vki

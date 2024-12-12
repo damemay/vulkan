@@ -8,16 +8,9 @@ constexpr uint32_t height_ = 720;
 constexpr uint32_t api_ = vk::ApiVersion10;
 constexpr bool debug_ = true;
 
-struct gfxp {
-    vk::Pipeline pipeline;
-    vk::Device dev;
-
-    gfxp(vk::Device dev);
-    ~gfxp();
-};
-
 struct sample_app : public vki::app {
     vki::queue_info gfx;
+    vki::gfxp pipeline;
 
     ~sample_app() {};
     sample_app() {
