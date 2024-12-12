@@ -2,7 +2,7 @@
 vulkan interface
 
 - C++20 with `vulkan.hpp`. 
-- Basic Vulkan context bootstrapper and helpers
+- Basic Vulkan context/app bootstrapper and helpers
 
 ## Building
 

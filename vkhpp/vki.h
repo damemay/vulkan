@@ -24,6 +24,7 @@ vki_runtime_exception(instance_create, "Failed to create vk::Instance!");
 vki_runtime_exception(debug_create, "Failed to create vk::DebugUtilsMessengerEXT!");
 vki_runtime_exception(surface_create, "Failed to create vk::SurfaceKHR!");
 vki_runtime_exception(device_create, "Failed to create vk::Device!");
+vki_runtime_exception(allocator_create, "Failed to create VmaAllocator!");
 vki_runtime_exception(swapchain_create, "Failed to create vk::SwapchainKHR!");
 vki_runtime_exception(buffer_create, "Failed to create vk::Buffer!");
 vki_runtime_exception(image_create, "Failed to create vk::Image!");
@@ -55,6 +56,7 @@ struct dev_info {
     vk::PhysicalDeviceVulkan12Features features_12 = {};
     vk::PhysicalDeviceVulkan13Features features_13 = {};
     vk::PhysicalDeviceVulkan14Features features_14 = {};
+    VmaAllocationCreateFlags vma_flags = 0;
 };
 
 struct base {
@@ -63,12 +65,13 @@ struct base {
     vk::SurfaceKHR surface = nullptr;
     vk::PhysicalDevice pdev = nullptr;
     vk::Device dev = nullptr;
+    VmaAllocator allocator = nullptr;
 
-    base() = default;
+    base(uint32_t api, bool debug, GLFWwindow *window = nullptr);
     ~base();
 
-    void create_instance(uint32_t version, bool debug);
-    void create_surface(GLFWwindow *window);
+    bool check_device_extensions(std::span<const char *> extensions);
+    bool check_device_queues(std::span<queue_info> queues);
     void create_device(dev_info *info);
 
     operator vk::Instance() { return instance; }
@@ -78,6 +81,10 @@ struct base {
     operator vk::Device() { return dev; }
     operator vk::Device &() { return dev; }
     operator VkDevice() { return (VkDevice)dev; }
+
+  private:
+    void create_instance(uint32_t version, bool debug);
+    void create_surface(GLFWwindow *window);
 };
 
 struct swp_init_info {

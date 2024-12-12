@@ -37,6 +37,8 @@ VmaAllocator init_vma(VmaAllocationCreateFlags flags, vk::PhysicalDevice pdev, v
 }
 
 base::~base() {
+    if (allocator)
+        vmaDestroyAllocator(allocator);
     if (dev)
         dev.destroy();
     if (surface)
@@ -45,6 +47,12 @@ base::~base() {
         instance.destroyDebugUtilsMessengerEXT(debug);
     if (instance)
         instance.destroy();
+}
+
+base::base(uint32_t api, bool debug, GLFWwindow *window) {
+    create_instance(api, debug);
+    if (window)
+        create_surface(window);
 }
 
 void base::create_instance(uint32_t version, bool debug) {
@@ -99,6 +107,42 @@ void base::create_surface(GLFWwindow *window) {
     if (glfwCreateWindowSurface((VkInstance)instance, window, nullptr, (VkSurfaceKHR *)&surface) !=
         VK_SUCCESS)
         throw err::surface_create();
+}
+
+bool base::check_device_extensions(std::span<const char *> extensions) {
+    auto [res, vkpds] = instance.enumeratePhysicalDevices();
+    if (res != vk::Result::eSuccess)
+        throw err::no_gpu();
+
+    for (auto vkpd : vkpds) {
+        auto ext = vkpd.enumerateDeviceExtensionProperties().value;
+        size_t count = 0;
+        for (auto e : ext) {
+            for (auto ue : extensions) {
+                if (strcmp(e.extensionName.data(), ue) == 0)
+                    count++;
+            }
+        }
+        if (count == extensions.size())
+            return true;
+    }
+    return false;
+}
+
+bool base::check_device_queues(std::span<queue_info> queues) {
+    auto vkqfs = pdev.getQueueFamilyProperties();
+    size_t found_l = 0;
+    for (auto &qf : queues) {
+        for (size_t i = 0; i < vkqfs.size(); i++) {
+            if (vkqfs[i].queueFlags & qf.flags) {
+                found_l++;
+            }
+        }
+    }
+
+    if (found_l == 0)
+        return false;
+    return true;
 }
 
 void base::create_device(dev_info *info) {
@@ -176,6 +220,11 @@ void base::create_device(dev_info *info) {
 
     dev = vkd;
     VULKAN_HPP_DEFAULT_DISPATCHER.init(dev);
+
+    auto vma = init_vma(info->vma_flags, pdev, dev, instance);
+    if (!vma)
+        throw err::allocator_create();
+    allocator = vma;
 }
 
 swp::swp(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface, swp_init_info info) {

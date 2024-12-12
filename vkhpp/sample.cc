@@ -2,15 +2,43 @@
 #include "vki_app.h"
 #include <GLFW/glfw3.h>
 
-constexpr uint32_t width = 1280;
-constexpr uint32_t height = 720;
+constexpr const char *title_ = "sample";
+constexpr uint32_t width_ = 1280;
+constexpr uint32_t height_ = 720;
+constexpr uint32_t api_ = vk::ApiVersion10;
+constexpr bool debug_ = true;
 
-int main() {
-    auto app = vki::app("test", width, height, vk::ApiVersion10, true);
-    vki::dev_info dev_info = {
-        .device_queues = {{vk::QueueFlagBits::eGraphics}},
-        .device_extensions = {vk::KHRSwapchainExtensionName},
-    };
-    app.init(dev_info, 0);
-    app.init({dev_info.device_queues[0].index});
-}
+struct gfxp {
+    vk::Pipeline pipeline;
+    vk::Device dev;
+
+    gfxp(vk::Device dev);
+    ~gfxp();
+};
+
+struct sample_app : public vki::app {
+    vki::queue_info gfx;
+
+    ~sample_app() {};
+    sample_app() : app{title_, width_, height_, api_, debug_} {
+        vki::dev_info dev_info = {
+            .device_queues = {{vk::QueueFlagBits::eGraphics}},
+            .device_extensions = {vk::KHRSwapchainExtensionName},
+        };
+        app::init_dev(dev_info);
+
+        gfx = dev_info.device_queues[0];
+        app::init_swp({gfx.index});
+        app::init_frm(gfx.index);
+
+        run();
+    }
+
+    void run() {
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+        }
+    }
+};
+
+int main() { auto app = sample_app(); }
