@@ -8,12 +8,12 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
   set(CMAKE_C_FLAGS
       "-Wall -Werror -Wno-unused-function -Wno-unused-variable -g -fsanitize=undefined -fsanitize=address -fno-omit-frame-pointer"
   )
-  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
+  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti -fno-exceptions")
 else()
   set(CMAKE_C_FLAGS
       "-Wall -Werror -Wno-unused-function -Wno-unused-variable -O2 -march=native -flto -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -ftrivial-auto-var-init=zero -D_FORTIFY_SOURCE=2 -finline-functions"
   )
-  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
+  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti -fno-exceptions")
 endif()
 
 include(FetchContent)

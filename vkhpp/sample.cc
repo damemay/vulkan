@@ -20,16 +20,17 @@ struct sample_app : public vki::app {
     vki::queue_info gfx;
 
     ~sample_app() {};
-    sample_app() : app{title_, width_, height_, api_, debug_} {
+    sample_app() {
+        assert(app::create(title_, width_, height_, api_, debug_));
         vki::dev_info dev_info = {
             .device_queues = {{vk::QueueFlagBits::eGraphics}},
             .device_extensions = {vk::KHRSwapchainExtensionName},
         };
-        app::init_dev(dev_info);
+        assert(app::create_dev(dev_info));
 
         gfx = dev_info.device_queues[0];
-        app::init_swp({gfx.index});
-        app::init_frm(gfx.index);
+        assert(app::create_swp({gfx.index}));
+        assert(app::create_frm(gfx.index));
 
         run();
     }

@@ -2,10 +2,10 @@
 #include <stdexcept>
 
 namespace vki {
-frmpool::frmpool(vk::Device dev, uint32_t queue_idx, uint32_t frm_count) {
+bool frmpool::create(vk::Device dev, uint32_t queue_idx, uint32_t frm_count) {
     auto [res, pool] = dev.createCommandPool({.queueFamilyIndex = queue_idx});
     if (res != vk::Result::eSuccess)
-        throw std::runtime_error("Failed to create vk::CommandPool!");
+        return false;
 
     cmd_pool = pool;
 
@@ -19,6 +19,8 @@ frmpool::frmpool(vk::Device dev, uint32_t queue_idx, uint32_t frm_count) {
         f.render_done = dev.createSemaphore({}).value;
         f.can_render = dev.createFence({.flags = vk::FenceCreateFlagBits::eSignaled}).value;
     }
+
+    return true;
 }
 
 frmpool::~frmpool() {
@@ -37,23 +39,23 @@ app::~app() {
     glfwTerminate();
 }
 
-app::app(const char *title, uint32_t w, uint32_t h, uint32_t api, bool debug) {
+bool app::create(const char *title, uint32_t w, uint32_t h, uint32_t api, bool debug) {
     if (!glfwInit())
-        throw std::runtime_error("Failed to initialize GLFW!");
+        return false;
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     if (!(window = glfwCreateWindow(w, h, title, nullptr, nullptr)))
-        throw std::runtime_error("Failed to initialize GLFW window!");
+        return false;
 
-    base = std::make_unique<vki::base>(api, debug, window);
+    return base.create(api, debug, window);
 }
 
-void app::init_dev(dev_info info) { base->create_device(&info); }
+bool app::create_dev(dev_info info) { return base.create_device(&info); }
 
-void app::init_swp(std::vector<uint32_t> queue_family_indices, vk::SurfaceFormatKHR surface,
-                   vk::PresentModeKHR present) {
+bool app::create_swp(std::vector<uint32_t> queue_family_indices, vk::SurfaceFormatKHR surface,
+                     vk::PresentModeKHR present) {
     vki::swp_init_info swp_info = {
         .extent = {width, height},
         .surface_format = surface,
@@ -61,11 +63,13 @@ void app::init_swp(std::vector<uint32_t> queue_family_indices, vk::SurfaceFormat
         .queue_family_indices = queue_family_indices,
     };
 
-    swp = std::make_unique<vki::swp>(base->dev, base->pdev, base->surface, swp_info);
+    return swp.create(base.dev, base.pdev, base.surface, swp_info);
 }
 
-void app::init_frm(uint32_t frame_queue_idx) {
-    frmpool_ = std::make_unique<frmpool>(base->dev, frame_queue_idx, swp->image_count);
+bool app::create_frm(uint32_t frame_queue_idx) {
+    if (!frmpool_.create(base.dev, frame_queue_idx, swp.image_count))
+        return false;
     glfwShowWindow(window);
+    return true;
 }
 } // namespace vki
