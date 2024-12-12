@@ -8,12 +8,12 @@ if(CMAKE_BUILD_TYPE MATCHES "Debug")
   set(CMAKE_C_FLAGS
       "-Wall -Werror -Wno-unused-function -Wno-unused-variable -g -fsanitize=undefined -fsanitize=address -fno-omit-frame-pointer"
   )
-  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti -fno-exceptions")
+  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
 else()
   set(CMAKE_C_FLAGS
       "-Wall -Werror -Wno-unused-function -Wno-unused-variable -O2 -march=native -flto -fno-delete-null-pointer-checks -fno-strict-overflow -fno-strict-aliasing -ftrivial-auto-var-init=zero -D_FORTIFY_SOURCE=2 -finline-functions"
   )
-  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti -fno-exceptions")
+  set(CMAKE_CXX_FLAGS "${CMAKE_C_FLAGS} -fno-rtti")
 endif()
 
 include(FetchContent)
@@ -41,8 +41,8 @@ set_target_properties(
              INCLUDE_DIRECTORIES "${VKI_INCLUDES}"
              LINK_LIBRARIES "${VKI_LIBS}")
 
-option(VKI_BUILD_TEST "Build Test" OFF)
-if(VKI_BUILD_TEST)
-  add_executable(vki_test sample.cc)
-  target_link_libraries(vki_test vki GPUOpen::VulkanMemoryAllocator glfw)
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
+  add_executable(sample sample.cc)
+  target_link_libraries(sample vki GPUOpen::VulkanMemoryAllocator glfw
+                        -fsanitize=undefined -fsanitize=address)
 endif()

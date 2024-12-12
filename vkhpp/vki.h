@@ -9,28 +9,32 @@
 #include <vulkan/vulkan.hpp>
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #include <GLFW/glfw3.h>
+#include <stdexcept>
 #include <vector>
 #include <vk_mem_alloc.h>
 
 namespace vki {
+namespace err {
+#define vki_runtime_exception(name, str)                                                           \
+    struct name : public std::runtime_error {                                                      \
+        name() : std::runtime_error(str) {}                                                        \
+    }
 
-enum class err {
-    ok = 1,
-    instance_create,
-    debug_create,
-    surface_create,
-    no_gpu,
-    no_extension_support,
-    no_queues,
-    device_create,
-    swapchain_create,
-    buffer_create,
-    image_create,
-    module_create,
-    file,
-    glfw,
-    vma,
-};
+vki_runtime_exception(instance_create, "Failed to create vk::Instance!");
+vki_runtime_exception(debug_create, "Failed to create vk::DebugUtilsMessengerEXT!");
+vki_runtime_exception(surface_create, "Failed to create vk::SurfaceKHR!");
+vki_runtime_exception(device_create, "Failed to create vk::Device!");
+vki_runtime_exception(swapchain_create, "Failed to create vk::SwapchainKHR!");
+vki_runtime_exception(buffer_create, "Failed to create vk::Buffer!");
+vki_runtime_exception(image_create, "Failed to create vk::Image!");
+vki_runtime_exception(image_view_create, "Failed to create vk::ImageView!");
+vki_runtime_exception(shader_create, "Failed to create vk::ShaderModule!");
+
+vki_runtime_exception(no_gpu, "Failed to find GPU with Vulkan support!");
+vki_runtime_exception(no_extensions, "Failed to find GPU with requested extensions!");
+vki_runtime_exception(no_queues, "Failed to find GPU with requested queues!");
+vki_runtime_exception(no_swapchain_img, "Failed to get vk::SwapchainKHR Images!");
+} // namespace err
 
 VmaAllocator init_vma(VmaAllocationCreateFlags flags, vk::PhysicalDevice pdev, vk::Device dev,
                       vk::Instance instance);
@@ -63,9 +67,9 @@ struct base {
     base() = default;
     ~base();
 
-    err create_instance(uint32_t version, bool debug);
-    err create_surface(GLFWwindow *window);
-    err create_device(dev_info *info);
+    void create_instance(uint32_t version, bool debug);
+    void create_surface(GLFWwindow *window);
+    void create_device(dev_info *info);
 
     operator vk::Instance() { return instance; }
     operator vk::Instance &() { return instance; }
@@ -99,11 +103,10 @@ struct swp {
 
     vk::Device dev;
 
-    swp() = default;
+    swp(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface, swp_init_info info);
     ~swp();
 
-    err create(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface, swp_init_info info);
-    err recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceKHR surface);
+    void recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceKHR surface);
 
     operator vk::SwapchainKHR() { return swapchain; }
     operator vk::SwapchainKHR &() { return swapchain; }
@@ -112,7 +115,7 @@ struct swp {
   private:
     vk::SwapchainCreateInfoKHR ci(vk::Extent2D ext, vk::SurfaceKHR surface,
                                   vk::PhysicalDevice pdev);
-    bool get_imgs();
+    void get_imgs();
 };
 
 struct buf {
@@ -122,18 +125,20 @@ struct buf {
 
     VmaAllocator allocator;
 
-    buf() = default;
+    buf(VmaAllocator alloc, vk::BufferCreateInfo buf_info, VmaAllocationCreateInfo alloc_info);
+
+    buf(VmaAllocator alloc, const size_t size, vk::BufferUsageFlags buf_usage,
+        VmaMemoryUsage mem_usage);
+
     ~buf();
-
-    err create(VmaAllocator alloc, vk::BufferCreateInfo buf_info,
-               VmaAllocationCreateInfo alloc_info);
-
-    err create(VmaAllocator alloc, const size_t size, vk::BufferUsageFlags buf_usage,
-               VmaMemoryUsage mem_usage);
 
     operator vk::Buffer() { return buffer; }
     operator vk::Buffer &() { return buffer; }
     operator VkBuffer() { return (VkBuffer)buffer; }
+
+  private:
+    void create(VmaAllocator alloc, vk::BufferCreateInfo buf_info,
+                VmaAllocationCreateInfo alloc_info);
 };
 
 struct img {
@@ -147,15 +152,14 @@ struct img {
     vk::Device dev;
     VmaAllocator allocator;
 
-    img() = default;
+    img(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
+        vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info);
+
+    img(vk::Device dev, VmaAllocator alloc, vk::Extent2D extent, vk::ImageUsageFlags usage,
+        vk::ImageAspectFlagBits aspect, vk::Format format = vk::Format::eB8G8R8A8Srgb,
+        vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1, uint32_t mipmaps = 1);
+
     ~img();
-
-    err create(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
-               vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info);
-
-    err create(vk::Device dev, VmaAllocator alloc, vk::Extent2D extent, vk::ImageUsageFlags usage,
-               vk::ImageAspectFlagBits aspect, vk::Format format = vk::Format::eB8G8R8A8Srgb,
-               vk::SampleCountFlagBits samples = vk::SampleCountFlagBits::e1, uint32_t mipmaps = 1);
 
     operator vk::Image() { return image; }
     operator vk::Image &() { return image; }
@@ -163,16 +167,18 @@ struct img {
     operator vk::ImageView() { return image_view; }
     operator vk::ImageView &() { return image_view; }
     operator VkImageView() { return (VkImageView)image_view; }
+
+  private:
+    void create(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
+                vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info);
 };
 
 struct shm {
     vk::ShaderModule module;
     vk::Device dev;
 
-    shm() = default;
+    shm(vk::Device dev, const char *path);
     ~shm();
-
-    err create(vk::Device dev, const char *path);
 
     operator vk::ShaderModule() { return module; }
     operator vk::ShaderModule &() { return module; }

@@ -47,7 +47,7 @@ base::~base() {
         instance.destroy();
 }
 
-err base::create_instance(uint32_t version, bool debug) {
+void base::create_instance(uint32_t version, bool debug) {
     VULKAN_HPP_DEFAULT_DISPATCHER.init();
 
     uint32_t glfw_l = 0;
@@ -80,7 +80,7 @@ err base::create_instance(uint32_t version, bool debug) {
         .ppEnabledExtensionNames = exts.data(),
     });
     if (res != vk::Result::eSuccess)
-        return err::instance_create;
+        throw err::instance_create();
 
     instance = vki;
     VULKAN_HPP_DEFAULT_DISPATCHER.init(instance);
@@ -89,25 +89,22 @@ err base::create_instance(uint32_t version, bool debug) {
         auto [res, vkd] = instance.createDebugUtilsMessengerEXT(debug_i);
         if (res != vk::Result::eSuccess) {
             instance.destroy();
-            return err::debug_create;
+            throw err::debug_create();
         }
         this->debug = vkd;
     }
-
-    return err::ok;
 }
 
-err base::create_surface(GLFWwindow *window) {
+void base::create_surface(GLFWwindow *window) {
     if (glfwCreateWindowSurface((VkInstance)instance, window, nullptr, (VkSurfaceKHR *)&surface) !=
         VK_SUCCESS)
-        return err::surface_create;
-    return err::ok;
+        throw err::surface_create();
 }
 
-err base::create_device(dev_info *info) {
+void base::create_device(dev_info *info) {
     auto [res, vkpds] = instance.enumeratePhysicalDevices();
     if (res != vk::Result::eSuccess)
-        return err::no_gpu;
+        throw err::no_gpu();
 
     for (auto vkpd : vkpds) {
         auto ext = vkpd.enumerateDeviceExtensionProperties().value;
@@ -124,7 +121,7 @@ err base::create_device(dev_info *info) {
         }
     }
     if (!pdev)
-        return err::no_extension_support;
+        throw err::no_extensions();
 
     auto vkqfs = pdev.getQueueFamilyProperties();
     std::set<uint32_t> uqfs = {};
@@ -145,7 +142,7 @@ err base::create_device(dev_info *info) {
     }
 
     if (found_l == 0 || uqfs.size() == 0)
-        return err::no_queues;
+        throw err::no_queues();
 
     float qpr = 1.0f;
     std::vector<vk::DeviceQueueCreateInfo> qis;
@@ -175,15 +172,13 @@ err base::create_device(dev_info *info) {
 
     auto [_res, vkd] = pdev.createDevice(dev_i);
     if (_res != vk::Result::eSuccess)
-        return err::device_create;
+        throw err::device_create();
 
     dev = vkd;
     VULKAN_HPP_DEFAULT_DISPATCHER.init(dev);
-    return err::ok;
 }
 
-err swp::create(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface,
-                swp_init_info info) {
+swp::swp(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface, swp_init_info info) {
     surface_format = info.surface_format;
     present_mode = info.present_mode;
     this->dev = dev;
@@ -199,12 +194,10 @@ err swp::create(vk::Device dev, vk::PhysicalDevice pdev, vk::SurfaceKHR surface,
 
     auto [res, vkswp] = dev.createSwapchainKHR(swp_i);
     if (res != vk::Result::eSuccess)
-        return err::swapchain_create;
+        throw err::swapchain_create();
     swapchain = vkswp;
 
-    if (!get_imgs())
-        return err::swapchain_create;
-    return err::ok;
+    get_imgs();
 }
 
 swp::~swp() {
@@ -213,14 +206,14 @@ swp::~swp() {
     dev.destroySwapchainKHR(swapchain);
 }
 
-err swp::recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceKHR surface) {
+void swp::recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceKHR surface) {
     auto nswp_i = ci(new_extent, surface, pdev);
     auto old = swapchain;
     nswp_i.oldSwapchain = swapchain;
 
     auto [res, vkswp] = dev.createSwapchainKHR(nswp_i);
     if (res != vk::Result::eSuccess)
-        return err::swapchain_create;
+        throw err::swapchain_create();
     swapchain = vkswp;
 
     dev.destroySwapchainKHR(old);
@@ -228,15 +221,13 @@ err swp::recreate(vk::Extent2D new_extent, vk::PhysicalDevice pdev, vk::SurfaceK
         dev.destroyImageView(iv);
     imageviews.clear();
 
-    if (!get_imgs())
-        return err::swapchain_create;
-    return err::ok;
+    get_imgs();
 }
 
-bool swp::get_imgs() {
+void swp::get_imgs() {
     auto [res, vksi] = dev.getSwapchainImagesKHR(swapchain);
     if (res != vk::Result::eSuccess)
-        return false;
+        throw err::no_swapchain_img();
     images = vksi;
 
     imageviews.resize(images.size());
@@ -256,13 +247,11 @@ bool swp::get_imgs() {
         if (res != vk::Result::eSuccess) {
             for (size_t j = 0; j < i; j++)
                 dev.destroyImageView(imageviews[j]);
-            return false;
+            throw err::image_view_create();
         }
 
         imageviews[i] = vksiv;
     }
-
-    return true;
 }
 
 vk::SwapchainCreateInfoKHR swp::ci(vk::Extent2D ext, vk::SurfaceKHR surface,
@@ -304,18 +293,21 @@ vk::SwapchainCreateInfoKHR swp::ci(vk::Extent2D ext, vk::SurfaceKHR surface,
 
 buf::~buf() { vmaDestroyBuffer(allocator, buffer, allocation); }
 
-err buf::create(VmaAllocator alloc, vk::BufferCreateInfo buf_info,
-                VmaAllocationCreateInfo alloc_info) {
+void buf::create(VmaAllocator alloc, vk::BufferCreateInfo buf_info,
+                 VmaAllocationCreateInfo alloc_info) {
     allocator = alloc;
 
     if (vmaCreateBuffer(allocator, (VkBufferCreateInfo *)&buf_info, &alloc_info,
                         (VkBuffer *)&buffer, &allocation, &this->alloc_info) != VK_SUCCESS)
-        return err::buffer_create;
-    return err::ok;
+        throw err::buffer_create();
 }
 
-err buf::create(VmaAllocator alloc, const size_t size, vk::BufferUsageFlags buf_usage,
-                VmaMemoryUsage mem_usage) {
+buf::buf(VmaAllocator alloc, vk::BufferCreateInfo buf_info, VmaAllocationCreateInfo alloc_info) {
+    create(alloc, buf_info, alloc_info);
+}
+
+buf::buf(VmaAllocator alloc, const size_t size, vk::BufferUsageFlags buf_usage,
+         VmaMemoryUsage mem_usage) {
     vk::BufferCreateInfo buf_info = {
         .size = size,
         .usage = buf_usage,
@@ -326,7 +318,7 @@ err buf::create(VmaAllocator alloc, const size_t size, vk::BufferUsageFlags buf_
         .usage = mem_usage,
     };
 
-    return create(alloc, buf_info, alloc_info);
+    create(alloc, buf_info, alloc_info);
 }
 
 img::~img() {
@@ -334,8 +326,8 @@ img::~img() {
     dev.destroyImageView(image_view);
 }
 
-err img::create(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
-                vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info) {
+void img::create(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
+                 vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info) {
     this->dev = dev;
     allocator = alloc;
     this->img_info = img_info;
@@ -343,22 +335,26 @@ err img::create(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info
 
     if (vmaCreateImage(allocator, (VkImageCreateInfo *)&img_info, &alloc_info, (VkImage *)&image,
                        &allocation, nullptr) != VK_SUCCESS)
-        return err::image_create;
+        throw err::image_create();
 
     imgv_info.image = image;
     auto [res, vkiv] = dev.createImageView(imgv_info);
     if (res != vk::Result::eSuccess) {
         vmaDestroyImage(allocator, image, allocation);
-        return err::image_create;
+        throw err::image_view_create();
     }
 
     image_view = vkiv;
-    return err::ok;
 }
 
-err img::create(vk::Device dev, VmaAllocator alloc, vk::Extent2D extent, vk::ImageUsageFlags usage,
-                vk::ImageAspectFlagBits aspect, vk::Format format, vk::SampleCountFlagBits samples,
-                uint32_t mipmaps) {
+img::img(vk::Device dev, VmaAllocator alloc, vk::ImageCreateInfo img_info,
+         vk::ImageViewCreateInfo imgv_info, VmaAllocationCreateInfo alloc_info) {
+    create(dev, alloc, img_info, imgv_info, alloc_info);
+}
+
+img::img(vk::Device dev, VmaAllocator alloc, vk::Extent2D extent, vk::ImageUsageFlags usage,
+         vk::ImageAspectFlagBits aspect, vk::Format format, vk::SampleCountFlagBits samples,
+         uint32_t mipmaps) {
     vk::ImageCreateInfo img_info = {
         .imageType = vk::ImageType::e2D,
         .format = format,
@@ -381,19 +377,17 @@ err img::create(vk::Device dev, VmaAllocator alloc, vk::Extent2D extent, vk::Ima
         .requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     };
 
-    return create(dev, alloc, img_info, imgv_info, alloc_info);
+    create(dev, alloc, img_info, imgv_info, alloc_info);
 }
 
 shm::~shm() { dev.destroyShaderModule(module); }
 
-err shm::create(vk::Device dev, const char *path) {
+shm::shm(vk::Device dev, const char *path) {
     this->dev = dev;
 
     std::ifstream file{path, std::ios::binary};
-    if (!file.is_open())
-        return err::file;
+    file.exceptions(std::ios::failbit | std::ios::badbit);
     std::vector<char> buffer(std::istreambuf_iterator<char>(file), {});
-    file.close();
 
     vk::ShaderModuleCreateInfo info = {
         .codeSize = buffer.size() * sizeof(char),
@@ -402,10 +396,8 @@ err shm::create(vk::Device dev, const char *path) {
 
     auto [res, vks] = dev.createShaderModule(info);
     if (res != vk::Result::eSuccess)
-        return err::module_create;
+        throw err::shader_create();
 
     module = vks;
-
-    return err::ok;
 }
 } // namespace vki

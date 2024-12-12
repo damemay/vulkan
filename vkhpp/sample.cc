@@ -6,12 +6,11 @@ constexpr uint32_t width = 1280;
 constexpr uint32_t height = 720;
 
 int main() {
-    auto app = vki::app();
-    vki::dev_info base_info = {
+    auto app = vki::app("test", width, height, vk::ApiVersion10, true);
+    vki::dev_info dev_info = {
         .device_queues = {{vk::QueueFlagBits::eGraphics}},
         .device_extensions = {vk::KHRSwapchainExtensionName},
     };
-    assert(app.init("test", width, height, vk::ApiVersion10, true) == vki::err::ok);
-    assert(app.init(base_info) == vki::err::ok);
-    assert(app.init({base_info.device_queues[0].index}) == vki::err::ok);
+    app.init(dev_info, 0);
+    app.init({dev_info.device_queues[0].index});
 }
