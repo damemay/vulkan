@@ -19,6 +19,54 @@ fn cmake(b: *std.Build, d: *std.Build.Dependency) struct { *std.Build.Step.Run, 
     return .{ cmake_prebuild, cmake_build };
 }
 
+const Dependency = struct {
+    build_dep: *std.Build.Dependency,
+    lib_name: []const u8,
+    lib_path: []const u8,
+    include_path: []const u8,
+
+    const Self = Dependency;
+
+    fn init(
+        b: *std.Build,
+        dep: []const u8,
+        lib_name: []const u8,
+        lib_path: []const u8,
+        include_path: []const u8,
+    ) Self {
+        var self: Self = undefined;
+        self.build_dep = b.dependency(dep, .{});
+        self.lib_name = lib_name;
+        self.lib_path = lib_path;
+        self.include_path = include_path;
+        return self;
+    }
+
+    fn cmakeDependOn(self: Self, b: *std.Build, c: *std.Build.Step.Compile) void {
+        const _cmake = cmake(b, self.build_dep);
+        c.step.dependOn(&_cmake.@"0".step);
+        c.step.dependOn(&_cmake.@"1".step);
+    }
+
+    fn cmakeDependOnWithArgs(
+        self: Self,
+        b: *std.Build,
+        c: *std.Build.Step.Compile,
+        args: []const []const u8,
+    ) void {
+        const _cmake = cmake(b, self.build_dep);
+        _cmake.@"0".addArgs(args);
+        c.step.dependOn(&_cmake.@"0".step);
+        c.step.dependOn(&_cmake.@"1".step);
+    }
+
+    fn link(self: Self, c: *std.Build.Step.Compile) void {
+        c.addLibraryPath(self.build_dep.path(self.lib_path));
+        c.addIncludePath(self.build_dep.path(self.include_path));
+        c.linkSystemLibrary(self.lib_name);
+    }
+};
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -32,28 +80,18 @@ pub fn build(b: *std.Build) !void {
     });
 
     // Lib dependencies
-    const volk_dep = b.dependency("volk", .{});
-    const volk_cmake = cmake(b, volk_dep);
-    lib.step.dependOn(&volk_cmake.@"0".step);
-    lib.step.dependOn(&volk_cmake.@"1".step);
-    lib.addLibraryPath(volk_dep.path("build"));
-    lib.addIncludePath(volk_dep.path(""));
-    lib.linkSystemLibrary("volk");
+    const volk = Dependency.init(b, "volk", "volk", "build", "");
+    volk.cmakeDependOn(b, lib);
+    volk.link(lib);
 
-    const glfw_dep = b.dependency("glfw", .{});
-    const glfw_cmake = cmake(b, glfw_dep);
-    glfw_cmake.@"0".addArgs(&[_][]const u8{
+    const glfw = Dependency.init(b, "glfw", "glfw3", "build/src", "include");
+    glfw.cmakeDependOnWithArgs(b, lib, &[_][]const u8{
         "-DGLFW_BUILD_EXAMPLES=OFF",
         "-DGLFW_BUILD_TESTS=OFF",
         "-DGLFW_BUILD_DOCS=OFF",
         "-DGLFW_INSTALL=OFF",
     });
-    lib.step.dependOn(&glfw_cmake.@"0".step);
-    lib.step.dependOn(&glfw_cmake.@"1".step);
-
-    lib.addLibraryPath(glfw_dep.path("build/src"));
-    lib.addIncludePath(glfw_dep.path("include"));
-    lib.linkSystemLibrary("glfw3");
+    glfw.link(lib);
 
     b.installArtifact(lib);
 
@@ -64,12 +102,8 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .link_libc = true,
     });
-    tests.addIncludePath(volk_dep.path(""));
-    tests.addLibraryPath(volk_dep.path("build"));
-    tests.linkSystemLibrary("volk");
-    tests.addIncludePath(glfw_dep.path(""));
-    tests.addLibraryPath(glfw_dep.path("build/src"));
-    tests.linkSystemLibrary("glfw3");
+    volk.link(tests);
+    glfw.link(tests);
 
     const run_test = b.addRunArtifact(tests);
     run_test.has_side_effects = true;
@@ -86,8 +120,8 @@ pub fn build(b: *std.Build) !void {
         .link_libc = true,
     });
 
-    exe.addIncludePath(volk_dep.path(""));
-    exe.addIncludePath(glfw_dep.path(""));
+    volk.link(exe);
+    glfw.link(exe);
     b.installArtifact(exe);
 
     // Run exe

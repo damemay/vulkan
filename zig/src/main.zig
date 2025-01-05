@@ -2,6 +2,11 @@ const std = @import("std");
 const viz = @import("viz.zig");
 
 pub fn main() !void {
-    const app = try viz.App.init();
+    const app = try viz.App.init(.{
+        .title = "vulkan in zig",
+        .width = 1280,
+        .height = 720,
+        .debug = true,
+    }, std.heap.c_allocator);
     defer app.deinit();
 }
