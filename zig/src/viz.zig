@@ -376,8 +376,10 @@ pub const App = struct {
                 transfer = .{ .index = index };
             }
 
-            if (present == null and try self.canQueuePresent(index)) present = .{ .index = index };
-            if (graphics != null and compute != null and present != null and transfer != null) break;
+            if (present == null and try canQueuePresent(self.pdev, self.surface, index))
+                present = .{ .index = index };
+            if (graphics != null and compute != null and present != null and transfer != null)
+                break;
         }
 
         // Perform checks and search for fallback non-independent queues
@@ -403,28 +405,6 @@ pub const App = struct {
         self.transfer = transfer.?;
     }
 
-    fn findQueueFlag(properties: []c.VkQueueFamilyProperties, flag: c.VkQueueFlagBits) ?u32 {
-        for (properties, 0..) |prop, i| {
-            const index: u32 = @intCast(i);
-            if (containsBitFlag(prop.queueFlags, flag)) return index;
-        }
-        return null;
-    }
-
-    fn canQueuePresent(self: Self, index: u32) !bool {
-        var can_present = c.VK_FALSE;
-
-        if (notVkSuccess(c.vkGetPhysicalDeviceSurfaceSupportKHR.?(
-            self.pdev,
-            index,
-            self.surface,
-            @ptrCast(&can_present),
-        ))) return error.VulkanGeneric;
-
-        if (can_present == c.VK_TRUE) return true;
-        return false;
-    }
-
     fn getUniqueQueueIndices(self: Self) ![]u32 {
         const all = [_]u32{
             self.graphics.index,
@@ -445,6 +425,28 @@ pub const App = struct {
         return try unique.toOwnedSlice();
     }
 };
+
+fn canQueuePresent(pdev: c.VkPhysicalDevice, surface: c.VkSurfaceKHR, index: u32) !bool {
+    var can_present = c.VK_FALSE;
+
+    if (notVkSuccess(c.vkGetPhysicalDeviceSurfaceSupportKHR.?(
+        pdev,
+        index,
+        surface,
+        @ptrCast(&can_present),
+    ))) return error.VulkanGeneric;
+
+    if (can_present == c.VK_TRUE) return true;
+    return false;
+}
+
+fn findQueueFlag(properties: []c.VkQueueFamilyProperties, flag: c.VkQueueFlagBits) ?u32 {
+    for (properties, 0..) |prop, i| {
+        const index: u32 = @intCast(i);
+        if (containsBitFlag(prop.queueFlags, flag)) return index;
+    }
+    return null;
+}
 
 fn containsBitFlag(a: c_uint, b: c_uint) bool {
     return a & b == b;
