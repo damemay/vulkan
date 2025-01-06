@@ -1,10 +1,15 @@
-// Ziggified Vulkan wrappers
 const c = @import("c.zig");
 
 pub inline fn deviceWaitIdle(device: c.VkDevice) !Result {
     return try castResult(c.vkDeviceWaitIdle.?(device));
 }
 
+pub const Queue = struct {
+    index: u32,
+    handle: c.VkQueue = null,
+};
+
+// VkResult wrappers to enum and error
 pub const Result = enum {
     success,
     not_ready,

@@ -2,26 +2,36 @@ const std = @import("std");
 
 const c = @import("c.zig");
 const vk = @import("vk.zig");
-const viz = @import("viz.zig");
 
-const App = viz.App;
-const Queue = viz.Queue;
+const containsBitFlag = @import("viz.zig").containsBitFlag;
 
-pub const Error = error{
-    GlfwInit,
-    GlfwWindow,
-    VulkanLoad,
-    VulkanNoRequiredDevice,
-    VulkanNoRequiredQueues,
-};
+const Self = @This();
 
-pub const Options = struct {
-    title: []const u8 = "viz. vulkan in zig",
-    width: u32 = 1280,
-    height: u32 = 720,
-    debug: bool = false,
-    vsync: bool = false,
-};
+window: *c.GLFWwindow,
+allocator: std.mem.Allocator,
+// Vulkan handles
+instance: c.VkInstance,
+debug_msg: c.VkDebugUtilsMessengerEXT,
+surface: c.VkSurfaceKHR,
+pdev: c.VkPhysicalDevice,
+dev: c.VkDevice,
+swapchain: c.VkSwapchainKHR,
+vma: c.VmaAllocator,
+// Vulkan Swapchain data
+present_mode: c.VkPresentModeKHR,
+format: c.VkFormat,
+color_space: c.VkColorSpaceKHR,
+current_extent: c.VkExtent2D,
+swapchain_images: []c.VkImage,
+swapchain_image_views: []c.VkImageView,
+// Vulkan Queues
+graphics: vk.Queue,
+compute: vk.Queue,
+present: vk.Queue,
+transfer: vk.Queue,
+// App state
+debug: bool,
+additional_support: bool,
 
 const api_version = c.VK_API_VERSION_1_2;
 const format: c.VkFormat = c.VK_FORMAT_B8G8R8A8_SRGB;
@@ -71,12 +81,183 @@ const vulkan_features2 = c.VkPhysicalDeviceFeatures2{
     .features = c.VkPhysicalDeviceFeatures{ .samplerAnisotropy = c.VK_TRUE },
 };
 
-pub fn glfw(app: *App, opt: Options) !void {
+pub const InitError = error{
+    GlfwInit,
+    GlfwWindow,
+    VulkanLoad,
+    VulkanNoRequiredDevice,
+    VulkanNoRequiredQueues,
+};
+
+pub const InitOptions = struct {
+    title: []const u8 = "viz. vulkan in zig",
+    width: u32 = 1280,
+    height: u32 = 720,
+    debug: bool = false,
+    vsync: bool = false,
+};
+
+pub fn init(opt: InitOptions, allocator: std.mem.Allocator) !Self {
+    var self: Self = undefined;
+    self.allocator = allocator;
+    self.debug = opt.debug;
+
+    try self.initGlfw(opt);
+    errdefer {
+        c.glfwDestroyWindow(self.window);
+        c.glfwTerminate();
+    }
+
+    try self.initInstance();
+    errdefer c.vkDestroyInstance.?(self.instance, null);
+
+    if (opt.debug) try self.initDebugMsg();
+    errdefer if (opt.debug)
+        c.vkDestroyDebugUtilsMessengerEXT.?(self.instance, self.debug_msg, null);
+
+    try self.initSurface();
+    errdefer c.vkDestroySurfaceKHR.?(self.instance, self.surface, null);
+
+    try self.initDevice();
+    errdefer c.vkDestroyDevice.?(self.dev, null);
+
+    try self.initSwapchain(opt);
+    errdefer self.destroySwapchain();
+
+    try self.initVma();
+    errdefer c.vmaDestroyAllocator(self.vma);
+
+    return self;
+}
+
+pub fn deinit(self: Self) void {
+    c.vmaDestroyAllocator(self.vma);
+    self.destroySwapchain();
+    c.vkDestroyDevice.?(self.dev, null);
+    c.vkDestroySurfaceKHR.?(self.instance, self.surface, null);
+    if (self.debug) c.vkDestroyDebugUtilsMessengerEXT.?(self.instance, self.debug_msg, null);
+    c.vkDestroyInstance.?(self.instance, null);
+    c.glfwDestroyWindow(self.window);
+    c.glfwTerminate();
+}
+
+pub fn createSwapchain(
+    self: *Self,
+    width: u32,
+    height: u32,
+    old: c.VkSwapchainKHR,
+) !c.VkSwapchainKHR {
+    var caps: c.VkSurfaceCapabilitiesKHR = undefined;
+    _ = try vk.castResult(c.vkGetPhysicalDeviceSurfaceCapabilitiesKHR.?(
+        self.pdev,
+        self.surface,
+        @ptrCast(&caps),
+    ));
+
+    self.current_extent = c.VkExtent2D{
+        .width = std.math.clamp(width, caps.minImageExtent.width, caps.maxImageExtent.width),
+        .height = std.math.clamp(height, caps.minImageExtent.height, caps.maxImageExtent.height),
+    };
+
+    const image_l = if (caps.minImageCount == caps.maxImageCount)
+        caps.maxImageCount
+    else
+        caps.minImageCount + 1;
+
+    const unique_indices = try self.getUniqueSwapchainQueueIndices();
+    defer self.allocator.free(unique_indices);
+
+    const swapchain_info = c.VkSwapchainCreateInfoKHR{
+        .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = self.surface,
+        .minImageCount = image_l,
+        .imageFormat = self.format,
+        .imageColorSpace = self.color_space,
+        .imageExtent = self.current_extent,
+        .imageArrayLayers = 1,
+        .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .imageSharingMode = if (unique_indices.len > 1)
+            c.VK_SHARING_MODE_CONCURRENT
+        else
+            c.VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = @intCast(unique_indices.len),
+        .pQueueFamilyIndices = @ptrCast(unique_indices.ptr),
+        .preTransform = caps.currentTransform,
+        .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = self.present_mode,
+        .clipped = c.VK_TRUE,
+        .oldSwapchain = old,
+    };
+
+    var swapchain: c.VkSwapchainKHR = undefined;
+    _ = try vk.castResult(c.vkCreateSwapchainKHR.?(
+        self.dev,
+        @ptrCast(&swapchain_info),
+        null,
+        @ptrCast(&swapchain),
+    ));
+
+    var image_count: u32 = 0;
+    _ = try vk.castResult(c.vkGetSwapchainImagesKHR.?(
+        self.dev,
+        swapchain,
+        @ptrCast(&image_count),
+        null,
+    ));
+
+    self.swapchain_images = try self.allocator.alloc(c.VkImage, image_count);
+    _ = try vk.castResult(c.vkGetSwapchainImagesKHR.?(
+        self.dev,
+        swapchain,
+        @ptrCast(&image_count),
+        @ptrCast(self.swapchain_images.ptr),
+    ));
+
+    self.swapchain_image_views = try self.allocator.alloc(c.VkImageView, image_count);
+
+    for (self.swapchain_images, self.swapchain_image_views) |img, *imgv| {
+        const imgv_info = c.VkImageViewCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .image = img,
+            .viewType = c.VK_IMAGE_VIEW_TYPE_2D,
+            .format = self.format,
+            .components = c.VkComponentMapping{
+                .r = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = c.VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = c.VkImageSubresourceRange{
+                .aspectMask = c.VK_IMAGE_ASPECT_COLOR_BIT,
+                .levelCount = 1,
+                .layerCount = 1,
+            },
+        };
+
+        _ = try vk.castResult(c.vkCreateImageView.?(
+            self.dev,
+            @ptrCast(&imgv_info),
+            null,
+            @ptrCast(&imgv.*),
+        ));
+    }
+
+    return swapchain;
+}
+
+pub fn destroySwapchain(self: Self) void {
+    c.vkDestroySwapchainKHR.?(self.dev, self.swapchain, null);
+    for (self.swapchain_image_views) |imgv| c.vkDestroyImageView.?(self.dev, imgv, null);
+    self.allocator.free(self.swapchain_images);
+    self.allocator.free(self.swapchain_image_views);
+}
+
+fn initGlfw(self: *Self, opt: InitOptions) !void {
     if (c.glfwInit() != c.GLFW_TRUE) return error.GlfwInit;
 
     c.glfwWindowHint(c.GLFW_VISIBLE, c.GLFW_FALSE);
     c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
-    app.window = c.glfwCreateWindow(
+    self.window = c.glfwCreateWindow(
         @intCast(opt.width),
         @intCast(opt.height),
         @ptrCast(opt.title),
@@ -85,19 +266,19 @@ pub fn glfw(app: *App, opt: Options) !void {
     ) orelse return error.GlfwWindow;
 }
 
-pub fn instance(app: *App) !void {
+fn initInstance(self: *Self) !void {
     if (try vk.castResult(c.volkInitialize()) != .success) return error.VulkanLoad;
 
     var glfw_ext_l: u32 = 0;
     const glfw_ext = c.glfwGetRequiredInstanceExtensions(@ptrCast(&glfw_ext_l));
 
-    const extension_l = if (app.debug) glfw_ext_l + 1 else glfw_ext_l;
+    const extension_l = if (self.debug) glfw_ext_l + 1 else glfw_ext_l;
 
-    const extensions = try app.allocator.alloc([*:0]const u8, extension_l);
-    defer app.allocator.free(extensions);
+    const extensions = try self.allocator.alloc([*:0]const u8, extension_l);
+    defer self.allocator.free(extensions);
 
     for (0..glfw_ext_l) |i| extensions[i] = glfw_ext[i];
-    if (app.debug) extensions[glfw_ext_l] = c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
+    if (self.debug) extensions[glfw_ext_l] = c.VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 
     const instance_info = c.VkInstanceCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -112,13 +293,13 @@ pub fn instance(app: *App) !void {
     _ = try vk.castResult(c.vkCreateInstance.?(
         @ptrCast(&instance_info),
         null,
-        @ptrCast(&app.instance),
+        @ptrCast(&self.instance),
     ));
 
-    c.volkLoadInstanceOnly(app.instance);
+    c.volkLoadInstanceOnly(self.instance);
 }
 
-pub fn debugMsg(app: *App) !void {
+fn initDebugMsg(self: *Self) !void {
     const debug_info = c.VkDebugUtilsMessengerCreateInfoEXT{
         .sType = c.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
         .messageSeverity = c.VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
@@ -133,32 +314,32 @@ pub fn debugMsg(app: *App) !void {
     };
 
     _ = try vk.castResult(c.vkCreateDebugUtilsMessengerEXT.?(
-        app.instance,
+        self.instance,
         @ptrCast(&debug_info),
         null,
-        @ptrCast(&app.debug_msg),
+        @ptrCast(&self.debug_msg),
     ));
 }
 
-pub fn surface(app: *App) !void {
+fn initSurface(self: *Self) !void {
     _ = try vk.castResult(c.glfwCreateWindowSurface(
-        app.instance,
-        app.window,
+        self.instance,
+        self.window,
         null,
-        @ptrCast(&app.surface),
+        @ptrCast(&self.surface),
     ));
 }
 
-pub fn device(app: *App) !void {
-    try pickDevice(app);
-    try pickQueues(app);
+fn initDevice(self: *Self) !void {
+    try self.pickDevice();
+    try self.pickQueues();
 
     const queue_priority: f32 = 1.0;
-    const unique_indices = try getUniqueQueueIndices(app);
-    defer app.allocator.free(unique_indices);
+    const unique_indices = try self.getUniqueQueueIndices();
+    defer self.allocator.free(unique_indices);
 
-    const queue_infos = try app.allocator.alloc(c.VkDeviceQueueCreateInfo, unique_indices.len);
-    defer app.allocator.free(queue_infos);
+    const queue_infos = try self.allocator.alloc(c.VkDeviceQueueCreateInfo, unique_indices.len);
+    defer self.allocator.free(queue_infos);
 
     for (queue_infos, unique_indices) |*info, i| {
         info.* = c.VkDeviceQueueCreateInfo{
@@ -169,8 +350,8 @@ pub fn device(app: *App) !void {
         };
     }
 
-    const extensions = if (app.additional_support) blk: {
-        var tmp = try app.allocator.alloc(
+    const extensions = if (self.additional_support) blk: {
+        var tmp = try self.allocator.alloc(
             [*:0]const u8,
             required_device_extensions.len +
                 additional_device_extensions.len,
@@ -186,8 +367,8 @@ pub fn device(app: *App) !void {
             additional_device_extensions,
         );
         break :blk tmp;
-    } else try app.allocator.dupe([*:0]const u8, required_device_extensions);
-    defer app.allocator.free(extensions);
+    } else try self.allocator.dupe([*:0]const u8, required_device_extensions);
+    defer self.allocator.free(extensions);
 
     const device_info = c.VkDeviceCreateInfo{
         .sType = c.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -199,36 +380,36 @@ pub fn device(app: *App) !void {
     };
 
     _ = try vk.castResult(c.vkCreateDevice.?(
-        app.pdev,
+        self.pdev,
         @ptrCast(&device_info),
         null,
-        @ptrCast(&app.dev),
+        @ptrCast(&self.dev),
     ));
 
-    c.volkLoadDevice(app.dev);
+    c.volkLoadDevice(self.dev);
 
-    c.vkGetDeviceQueue.?(app.dev, app.graphics.index, 0, @ptrCast(&app.graphics.handle));
-    c.vkGetDeviceQueue.?(app.dev, app.compute.index, 0, @ptrCast(&app.compute.handle));
-    c.vkGetDeviceQueue.?(app.dev, app.present.index, 0, @ptrCast(&app.present.handle));
-    c.vkGetDeviceQueue.?(app.dev, app.transfer.index, 0, @ptrCast(&app.transfer.handle));
+    c.vkGetDeviceQueue.?(self.dev, self.graphics.index, 0, @ptrCast(&self.graphics.handle));
+    c.vkGetDeviceQueue.?(self.dev, self.compute.index, 0, @ptrCast(&self.compute.handle));
+    c.vkGetDeviceQueue.?(self.dev, self.present.index, 0, @ptrCast(&self.present.handle));
+    c.vkGetDeviceQueue.?(self.dev, self.transfer.index, 0, @ptrCast(&self.transfer.handle));
 }
 
-pub fn swapchain(app: *App, opt: Options) !void {
-    app.format = format;
-    app.color_space = color_space;
-    app.present_mode = blk: {
+fn initSwapchain(self: *Self, opt: InitOptions) !void {
+    self.format = format;
+    self.color_space = color_space;
+    self.present_mode = blk: {
         if (opt.vsync) break :blk c.VK_PRESENT_MODE_FIFO_KHR;
 
         var mode_l: u32 = 0;
         _ = try vk.castResult(c.vkGetPhysicalDeviceSurfacePresentModesKHR.?(
-            app.pdev,
-            app.surface,
+            self.pdev,
+            self.surface,
             @ptrCast(&mode_l),
             null,
         ));
 
-        const modes = try app.allocator.alloc(c.VkPresentModeKHR, mode_l);
-        defer app.allocator.free(modes);
+        const modes = try self.allocator.alloc(c.VkPresentModeKHR, mode_l);
+        defer self.allocator.free(modes);
 
         for (modes) |mode| {
             if (mode == c.VK_PRESENT_MODE_IMMEDIATE_KHR)
@@ -238,10 +419,10 @@ pub fn swapchain(app: *App, opt: Options) !void {
         }
     };
 
-    app.swapchain = try app.createSwapchain(opt.width, opt.height, null);
+    self.swapchain = try self.createSwapchain(opt.width, opt.height, null);
 }
 
-pub fn vma(app: *App) !void {
+fn initVma(self: *Self) !void {
     const functions = c.VmaVulkanFunctions{
         .vkGetInstanceProcAddr = c.vkGetInstanceProcAddr,
         .vkGetDeviceProcAddr = c.vkGetDeviceProcAddr,
@@ -249,28 +430,28 @@ pub fn vma(app: *App) !void {
 
     const vma_info = c.VmaAllocatorCreateInfo{
         .flags = c.VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
-        .physicalDevice = app.pdev,
-        .device = app.dev,
-        .instance = app.instance,
+        .physicalDevice = self.pdev,
+        .device = self.dev,
+        .instance = self.instance,
         .pVulkanFunctions = @ptrCast(&functions),
     };
 
-    _ = try vk.castResult(c.vmaCreateAllocator(@ptrCast(&vma_info), @ptrCast(&app.vma)));
+    _ = try vk.castResult(c.vmaCreateAllocator(@ptrCast(&vma_info), @ptrCast(&self.vma)));
 }
 
-fn pickDevice(app: *App) !void {
+fn pickDevice(self: *Self) !void {
     var device_l: u32 = 0;
     _ = try vk.castResult(c.vkEnumeratePhysicalDevices.?(
-        app.instance,
+        self.instance,
         @ptrCast(&device_l),
         null,
     ));
 
-    const devices = try app.allocator.alloc(c.VkPhysicalDevice, device_l);
-    defer app.allocator.free(devices);
+    const devices = try self.allocator.alloc(c.VkPhysicalDevice, device_l);
+    defer self.allocator.free(devices);
 
     _ = try vk.castResult(c.vkEnumeratePhysicalDevices.?(
-        app.instance,
+        self.instance,
         @ptrCast(&device_l),
         @ptrCast(devices.ptr),
     ));
@@ -286,8 +467,8 @@ fn pickDevice(app: *App) !void {
             null,
         ));
 
-        const extensions = try app.allocator.alloc(c.VkExtensionProperties, extension_l);
-        defer app.allocator.free(extensions);
+        const extensions = try self.allocator.alloc(c.VkExtensionProperties, extension_l);
+        defer self.allocator.free(extensions);
 
         _ = try vk.castResult(c.vkEnumerateDeviceExtensionProperties.?(
             pdevice,
@@ -329,45 +510,45 @@ fn pickDevice(app: *App) !void {
     }
 
     if (best_pick) |best| {
-        app.pdev = best;
-        app.additional_support = true;
+        self.pdev = best;
+        self.additional_support = true;
     } else if (weak_pick) |weak| {
-        app.pdev = weak;
-        app.additional_support = false;
+        self.pdev = weak;
+        self.additional_support = false;
     } else {
         return error.VulkanNoRequiredDevice;
     }
 }
 
-fn pickQueues(app: *App) !void {
+fn pickQueues(self: *Self) !void {
     var queue_l: u32 = 0;
-    c.vkGetPhysicalDeviceQueueFamilyProperties.?(app.pdev, @ptrCast(&queue_l), null);
+    c.vkGetPhysicalDeviceQueueFamilyProperties.?(self.pdev, @ptrCast(&queue_l), null);
 
-    const properties = try app.allocator.alloc(c.VkQueueFamilyProperties, queue_l);
-    defer app.allocator.free(properties);
+    const properties = try self.allocator.alloc(c.VkQueueFamilyProperties, queue_l);
+    defer self.allocator.free(properties);
 
     c.vkGetPhysicalDeviceQueueFamilyProperties.?(
-        app.pdev,
+        self.pdev,
         @ptrCast(&queue_l),
         @ptrCast(properties.ptr),
     );
 
-    var graphics: ?Queue = null;
-    var compute: ?Queue = null;
-    var present: ?Queue = null;
-    var transfer: ?Queue = null;
+    var graphics: ?vk.Queue = null;
+    var compute: ?vk.Queue = null;
+    var present: ?vk.Queue = null;
+    var transfer: ?vk.Queue = null;
 
     for (properties, 0..) |prop, i| {
         const index: u32 = @intCast(i);
-        if (graphics == null and viz.containsBitFlag(prop.queueFlags, c.VK_QUEUE_GRAPHICS_BIT)) {
+        if (graphics == null and containsBitFlag(prop.queueFlags, c.VK_QUEUE_GRAPHICS_BIT)) {
             graphics = .{ .index = index };
-        } else if (compute == null and viz.containsBitFlag(prop.queueFlags, c.VK_QUEUE_COMPUTE_BIT)) {
+        } else if (compute == null and containsBitFlag(prop.queueFlags, c.VK_QUEUE_COMPUTE_BIT)) {
             compute = .{ .index = index };
-        } else if (transfer == null and viz.containsBitFlag(prop.queueFlags, c.VK_QUEUE_TRANSFER_BIT)) {
+        } else if (transfer == null and containsBitFlag(prop.queueFlags, c.VK_QUEUE_TRANSFER_BIT)) {
             transfer = .{ .index = index };
         }
 
-        if (present == null and try canQueuePresent(app.pdev, app.surface, index))
+        if (present == null and try canQueuePresent(self.pdev, self.surface, index))
             present = .{ .index = index };
         if (graphics != null and compute != null and present != null and transfer != null)
             break;
@@ -390,20 +571,38 @@ fn pickQueues(app: *App) !void {
         }
     }
 
-    app.graphics = graphics.?;
-    app.compute = compute.?;
-    app.present = present.?;
-    app.transfer = transfer.?;
+    self.graphics = graphics.?;
+    self.compute = compute.?;
+    self.present = present.?;
+    self.transfer = transfer.?;
 }
 
-fn getUniqueQueueIndices(app: *App) ![]u32 {
+fn getUniqueSwapchainQueueIndices(self: Self) ![]u32 {
     const all = [_]u32{
-        app.graphics.index,
-        app.compute.index,
-        app.present.index,
-        app.transfer.index,
+        self.graphics.index,
+        self.present.index,
     };
-    var unique = try std.ArrayList(u32).initCapacity(app.allocator, 4);
+    var unique = try std.ArrayList(u32).initCapacity(self.allocator, 2);
+
+    for (all) |i| {
+        for (unique.items) |ui| {
+            if (i == ui) break;
+        } else {
+            try unique.append(i);
+        }
+    }
+
+    return try unique.toOwnedSlice();
+}
+
+fn getUniqueQueueIndices(self: *Self) ![]u32 {
+    const all = [_]u32{
+        self.graphics.index,
+        self.compute.index,
+        self.present.index,
+        self.transfer.index,
+    };
+    var unique = try std.ArrayList(u32).initCapacity(self.allocator, 4);
 
     for (all) |i| {
         for (unique.items) |ui| {
@@ -433,7 +632,7 @@ fn canQueuePresent(pdev: c.VkPhysicalDevice, _surface: c.VkSurfaceKHR, index: u3
 fn findQueueFlag(properties: []c.VkQueueFamilyProperties, flag: c.VkQueueFlagBits) ?u32 {
     for (properties, 0..) |prop, i| {
         const index: u32 = @intCast(i);
-        if (viz.containsBitFlag(prop.queueFlags, flag)) return index;
+        if (containsBitFlag(prop.queueFlags, flag)) return index;
     }
     return null;
 }
