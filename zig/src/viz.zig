@@ -37,7 +37,6 @@ pub const App = struct {
     transfer: Queue,
     // App state
     debug: bool,
-    vsync: bool,
     additional_support: bool,
 
     const Self = App;

@@ -3,14 +3,14 @@ const std = @import("std");
 fn cmake(b: *std.Build, d: *std.Build.Dependency) struct { *std.Build.Step.Run, *std.Build.Step.Run } {
     const root_path = d.path("").getPath(b);
     const build_path = d.path("build").getPath(b);
-    const cmake_prebuild = b.addSystemCommand(&[_][]const u8{
+    const cmake_prebuild = b.addSystemCommand(&.{
         "cmake",
         "-B",
         build_path,
         "-S",
         root_path,
     });
-    const cmake_build = b.addSystemCommand(&[_][]const u8{
+    const cmake_build = b.addSystemCommand(&.{
         "cmake",
         "--build",
         build_path,
@@ -82,17 +82,33 @@ pub fn build(b: *std.Build) !void {
     // Lib dependencies
     const volk = Dependency.init(b, "volk", "volk", "build", "");
     volk.cmakeDependOn(b, lib);
-    volk.link(lib);
 
     const glfw = Dependency.init(b, "glfw", "glfw3", "build/src", "include");
-    glfw.cmakeDependOnWithArgs(b, lib, &[_][]const u8{
+    glfw.cmakeDependOnWithArgs(b, lib, &.{
         "-DGLFW_BUILD_EXAMPLES=OFF",
         "-DGLFW_BUILD_TESTS=OFF",
         "-DGLFW_BUILD_DOCS=OFF",
         "-DGLFW_INSTALL=OFF",
     });
+
+    volk.link(lib);
     glfw.link(lib);
 
+    const vma = b.addStaticLibrary(.{
+        .name = "vma",
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    vma.linkLibCpp();
+    const vma_dep = b.dependency("vma", .{});
+    const vma_include_path = vma_dep.path("include");
+    vma.addCSourceFile(.{ .file = b.path("src/vma.cc"), .flags = &.{"-std=c++14"} });
+    vma.addIncludePath(vma_include_path);
+    lib.addIncludePath(vma_include_path);
+    lib.linkLibrary(vma);
+
+    b.installArtifact(vma);
     b.installArtifact(lib);
 
     // Test lib
@@ -102,8 +118,11 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
         .link_libc = true,
     });
+
     volk.link(tests);
     glfw.link(tests);
+    tests.addIncludePath(vma_include_path);
+    tests.linkLibrary(vma);
 
     const run_test = b.addRunArtifact(tests);
     run_test.has_side_effects = true;
@@ -122,6 +141,8 @@ pub fn build(b: *std.Build) !void {
 
     volk.link(exe);
     glfw.link(exe);
+    exe.addIncludePath(vma_include_path);
+    exe.linkLibrary(vma);
     b.installArtifact(exe);
 
     // Run exe

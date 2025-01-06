@@ -217,7 +217,7 @@ pub fn swapchain(app: *App, opt: Options) !void {
     app.format = format;
     app.color_space = color_space;
     app.present_mode = blk: {
-        if (app.vsync) break :blk c.VK_PRESENT_MODE_FIFO_KHR;
+        if (opt.vsync) break :blk c.VK_PRESENT_MODE_FIFO_KHR;
 
         var mode_l: u32 = 0;
         _ = try vk.castResult(c.vkGetPhysicalDeviceSurfacePresentModesKHR.?(
