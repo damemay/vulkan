@@ -103,7 +103,7 @@ pub fn build(b: *std.Build) !void {
     vma.linkLibCpp();
     const vma_dep = b.dependency("vma", .{});
     const vma_include_path = vma_dep.path("include");
-    vma.addCSourceFile(.{ .file = b.path("src/vma.cc"), .flags = &.{"-std=c++14"} });
+    vma.addCSourceFile(.{ .file = b.path("src/vma.cc"), .flags = &.{"-std=c++17"} });
     vma.addIncludePath(vma_include_path);
     lib.addIncludePath(vma_include_path);
     lib.linkLibrary(vma);

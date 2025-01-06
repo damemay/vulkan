@@ -241,6 +241,23 @@ pub fn swapchain(app: *App, opt: Options) !void {
     app.swapchain = try app.createSwapchain(opt.width, opt.height, null);
 }
 
+pub fn vma(app: *App) !void {
+    const functions = c.VmaVulkanFunctions{
+        .vkGetInstanceProcAddr = c.vkGetInstanceProcAddr,
+        .vkGetDeviceProcAddr = c.vkGetDeviceProcAddr,
+    };
+
+    const vma_info = c.VmaAllocatorCreateInfo{
+        .flags = c.VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .physicalDevice = app.pdev,
+        .device = app.dev,
+        .instance = app.instance,
+        .pVulkanFunctions = @ptrCast(&functions),
+    };
+
+    _ = try vk.castResult(c.vmaCreateAllocator(@ptrCast(&vma_info), @ptrCast(&app.vma)));
+}
+
 fn pickDevice(app: *App) !void {
     var device_l: u32 = 0;
     _ = try vk.castResult(c.vkEnumeratePhysicalDevices.?(

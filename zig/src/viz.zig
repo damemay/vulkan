@@ -23,6 +23,7 @@ pub const App = struct {
     pdev: c.VkPhysicalDevice,
     dev: c.VkDevice,
     swapchain: c.VkSwapchainKHR,
+    vma: c.VmaAllocator,
     // Vulkan Swapchain data
     present_mode: c.VkPresentModeKHR,
     format: c.VkFormat,
@@ -68,10 +69,14 @@ pub const App = struct {
         try app_init.swapchain(&self, opt);
         errdefer self.destroySwapchain();
 
+        try app_init.vma(&self);
+        errdefer c.vmaDestroyAllocator(self.vma);
+
         return self;
     }
 
     pub fn deinit(self: Self) void {
+        c.vmaDestroyAllocator(self.vma);
         self.destroySwapchain();
         c.vkDestroyDevice.?(self.dev, null);
         c.vkDestroySurfaceKHR.?(self.instance, self.surface, null);
