@@ -5,6 +5,7 @@ pub const App = @import("App.zig");
 
 const std = @import("std");
 
+/// Tests if bitflag `a` contains `b`.
 pub fn containsBitFlag(a: c_uint, b: c_uint) bool {
     return a & b == b;
 }

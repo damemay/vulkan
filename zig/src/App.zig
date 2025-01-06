@@ -1,3 +1,5 @@
+//! Structure holding and managing application state.
+
 const std = @import("std");
 
 const c = @import("c.zig");

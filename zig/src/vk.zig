@@ -1,15 +1,17 @@
+//! This file provides various Vulkan wrappers and helpers.
 const c = @import("c.zig");
 
 pub inline fn deviceWaitIdle(device: c.VkDevice) !Result {
     return try castResult(c.vkDeviceWaitIdle.?(device));
 }
 
+/// Queue wrapper providing queue family index and VkQueue handle.
 pub const Queue = struct {
     index: u32,
     handle: c.VkQueue = null,
 };
 
-// VkResult wrappers to enum and error
+/// Non-error VkResult values wrapped as enum.
 pub const Result = enum {
     success,
     not_ready,
@@ -27,6 +29,7 @@ pub const Result = enum {
     pipeline_binary_missing_khr,
 };
 
+/// Error VkResult values wrapped as error.
 pub const Error = error{
     OutOfHostMemory,
     OutOfDeviceMemory,
@@ -65,6 +68,7 @@ pub const Error = error{
     NotEnoughSpaceKHR,
 };
 
+/// Cast c.VkResult value into vk.Result or vk.Error.
 pub fn castResult(result: c.VkResult) !Result {
     return switch (result) {
         c.VK_SUCCESS => .success,
