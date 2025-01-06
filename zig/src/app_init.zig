@@ -17,9 +17,9 @@ pub const Error = error{
 
 pub const Options = struct {
     title: []const u8 = "viz. vulkan in zig",
-    width: u32,
-    height: u32,
-    debug: bool,
+    width: u32 = 1280,
+    height: u32 = 720,
+    debug: bool = false,
     vsync: bool = false,
 };
 

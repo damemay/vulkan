@@ -1,8 +1,11 @@
 // Exports
 pub const c = @import("c.zig");
 pub const vk = @import("vk.zig");
-pub const app_init = @import("app_init.zig");
 
+pub const AppInitError = app_init.Error;
+pub const AppInitOptions = app_init.Options;
+//
+const app_init = @import("app_init.zig");
 const std = @import("std");
 
 pub const Queue = struct {
@@ -216,10 +219,6 @@ pub fn containsBitFlag(a: c_uint, b: c_uint) bool {
 // Tests
 const testing = @import("std").testing;
 test "app init test" {
-    const app = try App.init(.{
-        .width = 640,
-        .height = 480,
-        .debug = true,
-    }, std.testing.allocator);
+    const app = try App.init(.{ .debug = true }, std.testing.allocator);
     defer app.deinit();
 }
