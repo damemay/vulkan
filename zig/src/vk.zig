@@ -13,10 +13,9 @@ pub var surface: c.VkSurfaceKHR = undefined;
 pub var swapchain: Swapchain = undefined;
 pub var vma_allocator: c.VmaAllocator = undefined;
 // Vulkan Queues:
-pub var graphics: Queue = undefined;
-pub var compute: Queue = undefined;
-pub var present: Queue = undefined;
-pub var transfer: Queue = undefined;
+pub var graphics_queue: Queue = undefined;
+pub var compute_queue: Queue = undefined;
+pub var transfer_queue: Queue = undefined;
 // State:
 pub var debug: bool = undefined;
 pub var additional_support: bool = undefined;
@@ -53,6 +52,100 @@ pub fn deinit() void {
     if (debug) c.vkDestroyDebugUtilsMessengerEXT.?(instance, debug_msg, null);
     c.vkDestroyInstance.?(instance, null);
 }
+
+/// App Frames
+pub const Frames = struct {
+    cmd_pool: c.VkCommandPool,
+    pool: []Frame,
+
+    const Self = @This();
+
+    pub fn init(queue_family_index: u32, n: usize) !Self {
+        var self: Self = undefined;
+        const pool_info = c.VkCommandPoolCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .queueFamilyIndex = queue_family_index,
+        };
+
+        _ = try castResult(c.vkCreateCommandPool.?(
+            device,
+            @ptrCast(&pool_info),
+            null,
+            @ptrCast(&self.cmd_pool),
+        ));
+
+        self.pool = try allocator.alloc(Frame, n);
+        for (self.pool) |*frame| frame.* = try Frame.init(self.cmd_pool);
+
+        return self;
+    }
+
+    pub fn deinit(self: Self) void {
+        for (self.pool) |frame| frame.deinit();
+        c.vkDestroyCommandPool.?(device, self.cmd_pool, null);
+        allocator.free(self.pool);
+    }
+};
+
+pub const Frame = struct {
+    cmd: c.VkCommandBuffer,
+    img_available: c.VkSemaphore,
+    finish_render: c.VkSemaphore,
+    can_render: c.VkFence,
+
+    const Self = @This();
+
+    pub fn init(pool: c.VkCommandPool) !Self {
+        var self: Self = undefined;
+
+        const alloc_info = c.VkCommandBufferAllocateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = pool,
+            .level = c.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+
+        _ = try castResult(c.vkAllocateCommandBuffers.?(device, @ptrCast(&alloc_info), @ptrCast(&self.cmd)));
+
+        const sem_info = c.VkSemaphoreCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+
+        _ = try castResult(c.vkCreateSemaphore.?(
+            device,
+            @ptrCast(&sem_info),
+            null,
+            @ptrCast(&self.img_available),
+        ));
+
+        _ = try castResult(c.vkCreateSemaphore.?(
+            device,
+            @ptrCast(&sem_info),
+            null,
+            @ptrCast(&self.finish_render),
+        ));
+
+        const fence_info = c.VkFenceCreateInfo{
+            .sType = c.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = c.VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+
+        _ = try castResult(c.vkCreateFence.?(
+            device,
+            @ptrCast(&fence_info),
+            null,
+            @ptrCast(&self.can_render),
+        ));
+
+        return self;
+    }
+
+    pub fn deinit(self: Self) void {
+        c.vkDestroySemaphore.?(device, self.img_available, null);
+        c.vkDestroySemaphore.?(device, self.finish_render, null);
+        c.vkDestroyFence.?(device, self.can_render, null);
+    }
+};
 
 /// Queue wrapper providing queue family index and VkQueue handle.
 pub const Queue = struct {
@@ -120,8 +213,7 @@ pub const Swapchain = struct {
         else
             caps.minImageCount + 1;
 
-        const unique_indices = try getUniqueSwapchainQueueIndices();
-        defer allocator.free(unique_indices);
+        const unique_indices = [1]u32{graphics_queue.index};
 
         const swapchain_info = c.VkSwapchainCreateInfoKHR{
             .sType = c.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
@@ -132,12 +224,9 @@ pub const Swapchain = struct {
             .imageExtent = self.current_extent,
             .imageArrayLayers = 1,
             .imageUsage = c.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | c.VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-            .imageSharingMode = if (unique_indices.len > 1)
-                c.VK_SHARING_MODE_CONCURRENT
-            else
-                c.VK_SHARING_MODE_EXCLUSIVE,
+            .imageSharingMode = c.VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = @intCast(unique_indices.len),
-            .pQueueFamilyIndices = @ptrCast(unique_indices.ptr),
+            .pQueueFamilyIndices = @ptrCast(&unique_indices),
             .preTransform = caps.currentTransform,
             .compositeAlpha = c.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
             .presentMode = self.present_mode,
@@ -206,24 +295,6 @@ pub const Swapchain = struct {
         for (self.swapchain_image_views) |imgv| c.vkDestroyImageView.?(device, imgv, null);
         allocator.free(self.swapchain_images);
         allocator.free(self.swapchain_image_views);
-    }
-
-    fn getUniqueSwapchainQueueIndices() ![]u32 {
-        const all = [_]u32{
-            graphics.index,
-            present.index,
-        };
-        var unique = try std.ArrayList(u32).initCapacity(allocator, 2);
-
-        for (all) |i| {
-            for (unique.items) |ui| {
-                if (i == ui) break;
-            } else {
-                try unique.append(i);
-            }
-        }
-
-        return try unique.toOwnedSlice();
     }
 };
 
@@ -384,6 +455,7 @@ const vulkan12_features = c.VkPhysicalDeviceVulkan12Features{
     .imagelessFramebuffer = c.VK_TRUE,
     .descriptorIndexing = c.VK_TRUE,
     .bufferDeviceAddress = c.VK_TRUE,
+    .separateDepthStencilLayouts = c.VK_TRUE,
 };
 const vulkan_features2 = c.VkPhysicalDeviceFeatures2{
     .sType = c.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
@@ -517,10 +589,9 @@ fn initDevice() !void {
 
     c.volkLoadDevice(device);
 
-    c.vkGetDeviceQueue.?(device, graphics.index, 0, @ptrCast(&graphics.handle));
-    c.vkGetDeviceQueue.?(device, compute.index, 0, @ptrCast(&compute.handle));
-    c.vkGetDeviceQueue.?(device, present.index, 0, @ptrCast(&present.handle));
-    c.vkGetDeviceQueue.?(device, transfer.index, 0, @ptrCast(&transfer.handle));
+    c.vkGetDeviceQueue.?(device, graphics_queue.index, 0, @ptrCast(&graphics_queue.handle));
+    c.vkGetDeviceQueue.?(device, compute_queue.index, 0, @ptrCast(&compute_queue.handle));
+    c.vkGetDeviceQueue.?(device, transfer_queue.index, 0, @ptrCast(&transfer_queue.handle));
 }
 
 fn initVma() !void {
@@ -657,6 +728,7 @@ fn pickQueues() !void {
 
     // Perform checks and search for fallback non-independent queues
     if (_graphics == null and _present == null) return error.VulkanNoRequiredQueues;
+    if (_graphics.?.index != _present.?.index) return error.VulkanNoRequiredQueues;
     if (_compute == null) {
         if (findQueueFlag(properties, c.VK_QUEUE_COMPUTE_BIT)) |index| {
             _compute = .{ .index = index };
@@ -672,19 +744,13 @@ fn pickQueues() !void {
         }
     }
 
-    graphics = _graphics.?;
-    compute = _compute.?;
-    present = _present.?;
-    transfer = _transfer.?;
+    graphics_queue = _graphics.?;
+    compute_queue = _compute.?;
+    transfer_queue = _transfer.?;
 }
 
 fn getUniqueQueueIndices() ![]u32 {
-    const all = [_]u32{
-        graphics.index,
-        compute.index,
-        present.index,
-        transfer.index,
-    };
+    const all = [_]u32{ graphics_queue.index, compute_queue.index, transfer_queue.index };
     var unique = try std.ArrayList(u32).initCapacity(allocator, 4);
 
     for (all) |i| {

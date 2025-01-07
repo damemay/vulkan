@@ -8,8 +8,9 @@ const vk = @import("vk.zig");
 const Self = @This();
 
 // App fields:
-window: *c.GLFWwindow,
 allocator: std.mem.Allocator,
+window: *c.GLFWwindow,
+frames: vk.Frames,
 // App state:
 debug: bool,
 additional_support: bool,
@@ -45,10 +46,14 @@ pub fn init(opt: InitOptions, allocator: std.mem.Allocator) !Self {
     try vk.init(opt, self.window, allocator);
     errdefer vk.deinit();
 
+    self.frames = try vk.Frames.init(vk.graphics_queue.index, 2);
+    errdefer self.frames.deinit();
+
     return self;
 }
 
 pub fn deinit(self: Self) void {
+    self.frames.deinit();
     vk.deinit();
     c.glfwDestroyWindow(self.window);
     c.glfwTerminate();
