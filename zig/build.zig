@@ -150,4 +150,8 @@ pub fn build(b: *std.Build) !void {
     run_cmd.step.dependOn(b.getInstallStep());
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
+
+    // ZLS Check
+    const check = b.step("check", "Run compilation check");
+    check.dependOn(&exe.step);
 }
